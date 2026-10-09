@@ -61,6 +61,7 @@ x-prod-env: &prod-env
 # Rótulos OCI gravados em cada imagem construída (deploy/empacotar-imagens.sh define CTRL_COMMIT/CTRL_BUILD_DATE).
 x-prod-labels: &prod-labels
   org.opencontainers.image.title: "CTRL Fiscal"
+  org.opencontainers.image.licenses: "MIT"
   org.opencontainers.image.version: ${VERSAO:-desconhecida}
   org.opencontainers.image.revision: ${CTRL_COMMIT:-desconhecido}
   org.opencontainers.image.created: ${CTRL_BUILD_DATE:-desconhecida}

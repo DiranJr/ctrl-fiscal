@@ -362,5 +362,19 @@ tests/           testes integrados (pytest)
 
 ## Licença
 
-A licença deste projeto **ainda não foi definida**. Até lá, nenhum direito de uso, cópia ou distribuição é
-concedido além do que a lei permite para a simples leitura do código publicado.
+O código do CTRL Fiscal é distribuído sob a **licença MIT** — veja o arquivo [`LICENSE`](LICENSE)
+(Copyright (c) 2026 Diran Lima Santos Junior).
+
+A licença MIT vale para o código deste projeto. Materiais de terceiros incluídos ou usados por ele **continuam
+sujeitos às respectivas licenças e atribuições**, que a MIT do projeto não substitui:
+
+- **Dependências** (pacotes Python e npm, imagens base de contêiner como MySQL e Nginx): cada uma segue a licença
+  declarada pelo seu autor, conforme os respectivos repositórios e metadados dos pacotes.
+- **Fontes do DANFSe:** Liberation Sans, incluída nas imagens, segue a SIL Open Font License; as fontes Microsoft
+  (Arial, Microsoft Sans Serif) não são distribuídas e só podem ser usadas por quem tiver licença própria.
+- **Documentos oficiais** em `docs/oficial/` (manuais, notas técnicas, anexos, páginas e esquemas XSD do portal
+  gov.br/nfse): cópias integrais, sem modificação, sob a licença declarada pelo portal (CC BY-ND 3.0), com origem,
+  versão, data e SHA-256 registrados em `docs/oficial/fontes.json`. As especificações obtidas com certificado
+  digital não são publicadas.
+- **Tabelas oficiais** (lista de serviços, NBS, municípios, cIndOp, cClassTrib) usadas pelo código mantêm a fonte
+  e as condições de uso do órgão que as publica.

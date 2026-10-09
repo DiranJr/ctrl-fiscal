@@ -12,10 +12,11 @@
 #                                        web,painel-fiscal}:<VERSAO> + imagens base fixadas por digest
 #                                        (mysql:8.4 e nginxinc/nginx-unprivileged:1.28-alpine)
 #   ctrlfiscal-imagens-<VERSAO>.txt      manifesto: commit, data, plataforma, id/rótulos de cada imagem
-#   ctrlfiscal-imagens-<VERSAO>.SHA256SUMS  sha256 dos dois arquivos acima (conferido pelo implantar.sh)
+#   ctrlfiscal-imagens-<VERSAO>.LICENSE.txt  licença MIT do código do CTRL Fiscal (cópia do LICENSE da raiz)
+#   ctrlfiscal-imagens-<VERSAO>.SHA256SUMS  sha256 dos três arquivos acima (conferido pelo implantar.sh)
 #
 # As imagens recebem rótulos OCI (org.opencontainers.image.revision = commit completo, version = VERSAO, created).
-# Transfira os três arquivos à VPS por SSH (scp/rsync); o pacote não contém segredos nem dados.
+# Transfira os quatro arquivos à VPS por SSH (scp/rsync); o pacote não contém segredos nem dados.
 # =============================================================================================================
 set -euo pipefail
 # shellcheck source=deploy/comum.sh
@@ -71,7 +72,9 @@ docker save "${IMAGENS[@]}" | gzip -6 > "$PACOTE"
     esac
   done
 } > "$MANIF"
+LICENCA="$SAIDA/ctrlfiscal-imagens-$VERSAO.LICENSE.txt"
+cp -- "$RAIZ/LICENSE" "$LICENCA"
 SOMAS="$SAIDA/ctrlfiscal-imagens-$VERSAO.SHA256SUMS"
-( cd "$SAIDA" && sha256sum -- "$(basename "$PACOTE")" "$(basename "$MANIF")" > "$(basename "$SOMAS")" )
+( cd "$SAIDA" && sha256sum -- "$(basename "$PACOTE")" "$(basename "$MANIF")" "$(basename "$LICENCA")" > "$(basename "$SOMAS")" )
 msg "pacote pronto: $PACOTE ($(du -h "$PACOTE" | cut -f1))"
-msg "envie à VPS:  scp $PACOTE $MANIF $SOMAS usuario@vps:/opt/ctrlfiscal/pacotes/"
+msg "envie à VPS:  scp $PACOTE $MANIF $LICENCA $SOMAS usuario@vps:/opt/ctrlfiscal/pacotes/"
