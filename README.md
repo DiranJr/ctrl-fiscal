@@ -48,8 +48,9 @@ liberado e o que continua bloqueado.
 | **DANFSe** (PDF conforme NT SE/CGNFS-e 008) individual e **download em lote** (PDF, XML ou ambos em ZIP) | Em uso. Sem as fontes Microsoft licenciadas usa Liberation Sans e declara o desvio no PDF. |
 | **Exportação XLSX** da consulta | Em uso. |
 | **Clientes (tomadores)**, perfis fiscais e **perfis de serviço** por workspace (inclusive preparados a partir das notas emitidas, com revisão e aprovação) | Em uso. |
-| **Rascunhos de DPS**: edição, validação (XSD oficial + regras do Anexo I), "usar nota como referência", prévia de IBS/CBS 2026, retenções | Em uso (validação local; nada é transmitido ao salvar ou validar). |
-| **Agendamento de lotes** de emissão | Implementado. Em produção exige a chave `NFSE_PRODUCTION_EMISSION_ENABLED`, permissão `emit`, perfil de serviço aprovado (mesma versão aplicada ao rascunho) e a confirmação individual do lote (empresa, ambiente, documentos com versão e valor, quantidade e total), conferida no servidor; sem ela o lote é recusado. |
+| **Rascunhos de DPS**: "Nova NFS-e do zero" e "usar nota como referência" (lida do XML oficial de nota emitida pela própria empresa, sem copiar a identidade fiscal), validação (XSD oficial + regras do Anexo I), prévia de IBS/CBS 2026, retenções | Em uso (nada é transmitido ao salvar ou validar). Pendências específicas para códigos ausentes, inválidos ou fora de vigência na competência nova; nada é preenchido por maioria de notas. |
+| **Configuração tributária por operação** (cTribNac, NBS, tribISSQN, PIS/COFINS, cIndOp, CST, cClassTrib) | Em uso. Operação equivalente reutiliza a configuração aprovada; tratamento diferente vira variante pendente de revisão, sem alterar o perfil aprovado nem os dados do rascunho. Aprovação explícita por quem administra o workspace, com origem dos campos, versões e auditoria. |
+| **"Emitir agora" e "Agendar emissão"** | Implementados, como opções separadas. Emitir agora começa o processamento no instante do servidor; agendar transmite na data escolhida. Um rascunho entra na fila uma vez só (clique repetido devolve o mesmo lote; agendar o que já está emitindo é recusado). Em produção exige a chave `NFSE_PRODUCTION_EMISSION_ENABLED`, permissão `emit`, perfil de serviço aprovado (mesma versão aplicada ao rascunho) e a confirmação individual do lote (empresa, ambiente, documentos com versão e valor, quantidade, total e a ação escolhida), conferida no servidor; sem ela o lote é recusado. |
 | **Emissão** (montagem e assinatura XMLDSig da DPS, fila com leases e idempotência, reconciliação antes de reenviar, envio à Sefin Nacional) | Implementada para **Produção Restrita** (`NFSE_RESTRICTED_ENABLED`) e **produção** (`NFSE_PRODUCTION_EMISSION_ENABLED`), chaves independentes e desligadas por padrão. Antes de transmitir, o worker reconfere permissão, workspace ativo, ambiente e perfil. Exercitada com governo simulado e assinatura local; **nenhuma DPS foi transmitida ao ambiente oficial pela plataforma**. |
 | **Cancelamento** (eventos 101101 e 101103, pedido com confirmação individual e acompanhamento da análise fiscal) | Implementado e testado com governo simulado. Em produção depende de `NFSE_PRODUCTION_CANCELLATION_ENABLED`, **habilitado pelo titular** na configuração da VPS; cada pedido exige confirmação explícita de um usuário com a permissão `cancel`. **Não foi homologado** oficialmente. |
 | **Administração**: usuários, vínculos por empresa, SUPER_ADMIN, link de ativação de uso único, revogação de sessões | Em uso. |
@@ -327,9 +328,11 @@ produção com valores fictícios.
   coisas separadamente. Cada lote exige permissão `emit`, perfil de serviço **aprovado** e confirmação individual da
   versão revisada; nenhum perfil é aprovado automaticamente. **Não homologada** oficialmente e nunca exercitada contra
   a Sefin real: a primeira nota transmitida terá efeito fiscal real.
-- **Emissão em Produção Restrita:** implementada, porém desligada; antes de ligar são necessários certificado A1
-  válido da empresa, cadastro completo do workspace (endereço, inscrição municipal, regime, série da DPS),
-  parâmetros municipais conferidos e acompanhamento da primeira transmissão.
+- **Emissão em Produção Restrita:** implementada, desligada na instalação operacional. Validação oficial de 09/10/2026
+  em ambiente temporário isolado (`scripts/ambiente_producao_restrita.py`): certificado aceito, convênio do município
+  ativo, alíquota e retenções consultadas e Id da DPS de teste conferido como livre; **a transmissão não foi feita**
+  porque a operação usada como referência não tem classificação IBS/CBS definida (pendência do titular, não
+  inventada). Emissão, consulta e cancelamento oficiais ainda **não** foram exercitados.
 - **Cancelamento em produção:** habilitado pelo titular (`NFSE_PRODUCTION_CANCELLATION_ENABLED=true` na VPS), com
   confirmação individual de cada pedido por usuário com a permissão `cancel`; **não homologado** oficialmente e com
   efeito fiscal real.

@@ -55,9 +55,10 @@ def require_customer(core: CoreClient, company_id: str, customer_id: str) -> dic
 
 def create_draft(
     s: Session, *, company: CompanyInfo, user_id: str, customer: dict, data: dict, now: datetime,
-    source_document_id: str | None = None, trace_id: str | None = None,
+    source_document_id: str | None = None, trace_id: str | None = None, origin: dict | None = None,
 ) -> Draft:
     d = Draft(
+        origin=origin or {"kind": "manual"},
         company_id=company.id,
         environment=company.environment,
         customer_id=customer["id"],
@@ -142,13 +143,41 @@ def draft_from_document(
     s: Session, *, company: CompanyInfo, core: CoreClient, user_id: str, source_document_id: str, now: datetime,
     trace_id: str | None,
 ) -> Draft:
+    """Rascunho NOVO a partir de NFS-e emitida pela empresa, com os dados lidos agora do XML oficial guardado (não de
+    um resumo): particularidades da operação preservadas, identidade fiscal da nota de origem descartada, pendências
+    específicas e a configuração tributária da operação resolvida (reutilizada se aprovada; senão, variante para
+    revisão — nunca aprovada automaticamente)."""
+    from .. import nfse_xml
+    from ..models import StoredBlob
+    from .common import read_blob
+    from .referencia import ReferenciaInvalida, ler_referencia
+
     doc = s.scalar(select(Document).where(Document.id == source_document_id, Document.company_id == company.id))
     if doc is None:
         raise DomainError(404, "DOCUMENT_NOT_FOUND", "Documento de referência não encontrado.")
-    if doc.direction != "ISSUED":
-        raise DomainError(422, "SOURCE_NOT_ISSUED", "Somente notas emitidas pela empresa podem servir de referência.")
-    if doc.environment != company.environment:
+    if doc.direction != "ISSUED" or doc.company_role != "PRESTADOR":
+        raise DomainError(422, "SOURCE_NOT_ISSUED", "Somente notas emitidas pela empresa (como prestadora) podem servir "
+                                                    "de referência; notas recebidas não fornecem identidade nem "
+                                                    "enquadramento do prestador.")
+    # Mesmo ambiente; ou nota REAL de produção como referência para um TESTE em Produção Restrita (sem efeito fiscal).
+    # O inverso (simulação/homologação → produção) nunca: o teste não pode virar referência de nota real.
+    teste_com_referencia_real = doc.environment == "production" and company.environment == "restricted"
+    if doc.environment != company.environment and not teste_com_referencia_real:
         raise DomainError(422, "SOURCE_OTHER_ENVIRONMENT", "Documento de outro ambiente não pode ser copiado.")
+    blob = s.get(StoredBlob, doc.xml_blob_id) if doc.xml_blob_id else None
+    competencia = default_competence(company, now)
+    if blob is None or blob.company_id != company.id:
+        if not (doc.simulated and company.environment == "mock"):
+            raise DomainError(422, "SOURCE_XML_MISSING", "A nota de referência não tem o XML oficial guardado: não há "
+                                                         "como reaproveitar os dados com segurança.")
+        ref = _referencia_simulada(doc)  # simulação não tem XML oficial: registro da própria simulação, rotulado
+    else:
+        try:
+            ref = ler_referencia(read_blob(blob), company.cnpj, competencia)
+        except ReferenciaInvalida as exc:
+            raise DomainError(422, exc.code, exc.message) from exc
+        except nfse_xml.XmlRejected as exc:
+            raise DomainError(422, "SOURCE_XML_INVALID", "XML oficial da nota de referência ilegível.") from exc
     customer = core.customer(company.id, doc.customer_id) if doc.customer_id else None
     if customer is None and doc.recipient_doc:
         customer = core.customer_by_document(company.id, doc.recipient_doc)
@@ -160,29 +189,141 @@ def draft_from_document(
                           "lidos do XML da nota) e tente novamente.",
                           [{"field": "customer", "code": "CUSTOMER_NOT_REGISTERED",
                             "message": "Tomador da nota sem cadastro nesta empresa."}])
-    data = {
-        # Competência revisável: parte do mês corrente no fuso da empresa, não da nota antiga.
-        "competence": default_competence(company, now),
-        "service": {
-            "national_code": doc.service_national_code,
-            "municipal_code": doc.service_municipal_code,
-            "description": doc.description or "",
-            "nbs_code": doc.nbs_code,
-            "location_code": doc.service_location_code,
-            "obra_code": doc.obra_code,
-            # Mesmo grupo obra da nota de referência (cCIB/inscImobFisc/endereço). infoCompl (pedido, ART, docRef)
-            # é próprio de cada nota e NÃO é copiado.
-            **{k: v for k, v in (doc.service_extra or {}).items()
-               if k in ("obra_cib", "obra_property_registration", "obra_address")},
-        },
-        # dCompet não é copiado: depende da nova prestação (fica para revisão).
-        "service_date": None,
-        "amount": money(doc.amount) or "0.00",
-        "deductions": money(doc.deductions) or "0.00",
-        "tax_settings": doc.tax_settings or {},
-    }
-    return create_draft(s, company=company, user_id=user_id, customer=customer, data=data, now=now,
-                        source_document_id=doc.id, trace_id=trace_id)
+    # Competência revisável: parte do mês corrente no fuso da empresa, não da nota antiga; dCompet não é copiado.
+    data = {"competence": competencia, "service_date": None, **ref["dados"]}
+    pend = list(ref["pendencias"])
+    if teste_com_referencia_real:
+        pend.append({"field": "source_document_id", "code": "REFERENCE_FROM_PRODUCTION", "severity": "info",
+                     "while_empty": False, "tag": None,
+                     "message": "Nota REAL de produção usada como referência para um teste na Produção Restrita (sem "
+                                "validade fiscal); a nova DPS tem identidade e numeração próprias do ambiente de teste."})
+    if doc.status != "AUTHORIZED":
+        pend.append({"field": "source_document_id", "code": "REFERENCE_NOT_AUTHORIZED", "severity": "warning",
+                     "while_empty": False, "tag": None,
+                     "message": f"A nota de origem está na situação {doc.status} (por exemplo, cancelada ou "
+                                "substituída): confira se a operação continua válida antes de emitir."})
+    origin = {"kind": "document", "document": {"id": doc.id, "status": doc.status, **ref["documento"]},
+              "fields": ref["campos"], "not_copied": ref["nao_copiados"], "pending": pend,
+              "ibs_cbs_source": ref["ibs_cbs_origem"]}
+    d = create_draft(s, company=company, user_id=user_id, customer=customer, data=data, now=now,
+                     source_document_id=doc.id, trace_id=trace_id, origin=origin)
+    d.origin = {**d.origin, "copied_operation": operacao_do_rascunho(d)}
+    resolver_operacao(s, d, core=core, user_id=user_id, now=now, trace_id=trace_id)
+    return d
+
+
+def _referencia_simulada(doc: Document) -> dict:
+    """Nota SIMULADA (ambiente de simulação, sem XML oficial): dados do registro da simulação, com a origem rotulada.
+    Nunca usada em ambiente oficial."""
+    from .referencia import NAO_COPIADOS
+
+    tax = {k: v for k, v in (doc.tax_settings or {}).items() if k in TAX_KEYS and v not in (None, "", {})}
+    service = {"national_code": doc.service_national_code, "municipal_code": doc.service_municipal_code,
+               "description": doc.description or "", "nbs_code": doc.nbs_code,
+               "location_code": doc.service_location_code, "obra_code": doc.obra_code,
+               **{k: v for k, v in (doc.service_extra or {}).items()
+                  if k in ("obra_cib", "obra_property_registration", "obra_address")}}
+    campos = {f"service.{k}": {"origem": "simulacao"} for k, v in service.items() if v}
+    campos.update({f"tax_settings.{k}": {"origem": "simulacao"} for k in tax})
+    return {"documento": {"number": doc.number, "competence": doc.competence, "access_key": doc.access_key},
+            "dados": {"service": service, "amount": money(doc.amount) or "0.00",
+                      "deductions": money(doc.deductions) or "0.00", "tax_settings": tax},
+            "campos": campos, "nao_copiados": [{"campo": c, "motivo": m} for c, m in NAO_COPIADOS],
+            "ibs_cbs_origem": {},
+            "pendencias": [{"field": "source_document_id", "code": "REFERENCE_SIMULATED", "severity": "info",
+                            "while_empty": False, "tag": None,
+                            "message": "Nota de origem SIMULADA (sem XML oficial): dados lidos do registro da simulação."},
+                           {"field": "service_date", "code": "REFERENCE_NEW_DATE", "severity": "warning",
+                            "while_empty": True, "tag": "dCompet",
+                            "message": "Informe a data de início da nova prestação (dCompet)."}]}
+
+
+# ---------------------------------------------------------------- configuração tributária da operação
+PERFIL_DE_CAMPO = (("national_code", "service.national_code"), ("nbs_code", "service.nbs_code"),
+                   ("issqn_taxation", "tax_settings.issqn_taxation"), ("pis_cofins_cst", "tax_settings.pis_cofins_cst"),
+                   ("ibs_cbs", "tax_settings.ibs_cbs"))
+
+
+def operacao_do_rascunho(d: Draft) -> dict:
+    """Códigos de enquadramento da operação do rascunho (os mesmos que compõem a assinatura da configuração)."""
+    tax = d.tax_settings or {}
+    ibs = tax.get("ibs_cbs") or {}
+    ibs_op = {k: ibs[k] for k in ("operation_indicator", "cst", "class_code", "regular") if ibs.get(k)}
+    return {"national_code": d.service_national_code, "nbs_code": d.service_nbs_code,
+            "issqn_taxation": tax.get("issqn_taxation"), "pis_cofins_cst": tax.get("pis_cofins_cst"),
+            "ibs_cbs": ibs_op or None}
+
+
+def _fontes_operacao(d: Draft, user_id: str, now: datetime) -> dict:
+    """Origem de cada campo da configuração: XML da nota de referência (se ainda igual ao copiado) ou usuário."""
+    origem = d.origin or {}
+    copiado = origem.get("copied_operation") or {}
+    atual = operacao_do_rascunho(d)
+    docu = origem.get("document") or {}
+    out: dict = {}
+    for campo, _ in PERFIL_DE_CAMPO:
+        if atual.get(campo) in (None, "", {}):
+            continue
+        if origem.get("kind") == "document" and copiado.get(campo) == atual.get(campo):
+            out[campo] = {"origem": "xml_historico" if campo == "ibs_cbs" else "xml",
+                          "documento": docu.get("number"), "chave": docu.get("access_key"),
+                          "nota": f"Lido do XML da NFS-e nº {docu.get('number')} (competência "
+                                  f"{docu.get('competence')})" + (": classificação da nota de origem — confirme para a "
+                                                                  "nova operação." if campo == "ibs_cbs" else ".")}
+        else:
+            out[campo] = {"origem": "usuario", "informado_por": user_id, "em": now.isoformat()}
+    return out
+
+
+def resolver_operacao(s: Session, d: Draft, *, core: CoreClient, user_id: str, now: datetime,
+                      trace_id: str | None) -> dict:
+    """Vincula ao rascunho a configuração tributária da operação (core: reutiliza a APROVADA equivalente, vincula a
+    pendente equivalente ou cria variante pendente). Perfis existentes nunca são alterados e os dados do rascunho
+    nunca são sobrescritos pelo perfil."""
+    from ..clients import UpstreamError
+
+    origem = d.origin or {"kind": "manual"}
+    docu = origem.get("document") or {}
+    origin_payload = {"kind": origem.get("kind", "manual"), "draft_id": d.id,
+                      **({"document": {k: docu.get(k) for k in ("id", "number", "access_key", "competence")}}
+                         if origem.get("kind") == "document" else {})}
+    try:
+        res = core.resolve_operation(d.company_id, operacao_do_rascunho(d), origin_payload,
+                                     _fontes_operacao(d, user_id, now), user_id)
+    except UpstreamError as exc:
+        if exc.status != 422:
+            raise
+        info = {"resolution": "NOT_REGISTERED", "errors": (exc.body or {}).get("errors") or [], "at": now.isoformat()}
+        d.service_profile_id = d.service_profile_version = None
+    else:
+        p = res.get("profile") or {}
+        info = {"resolution": res["resolution"], "profile_id": p.get("id"), "profile_name": p.get("name"),
+                "profile_status": p.get("status"), "profile_version": p.get("version"),
+                "divergent_from": res.get("divergent_from") or [], "at": now.isoformat()}
+        if res["resolution"] == "INACTIVE_EQUIVALENT":
+            d.service_profile_id = d.service_profile_version = None
+        else:
+            d.service_profile_id, d.service_profile_version = p.get("id"), p.get("version")
+    d.origin = {**origem, "operation": info}
+    audit(s, now, "draft.operation_resolved", company_id=d.company_id, actor_id=user_id, target_type="draft",
+          target_id=d.id, details={k: info.get(k) for k in ("resolution", "profile_id", "profile_version")},
+          trace_id=trace_id)
+    return info
+
+
+def registrar_operacao(s: Session, d: Draft, *, expected_version: int, core: CoreClient, user_id: str, now: datetime,
+                       trace_id: str | None) -> dict:
+    """Ação explícita (rascunho do zero ou referência editada): registra/reutiliza a configuração da operação ATUAL.
+    Muda a versão do rascunho: a revisão e a confirmação anteriores deixam de valer."""
+    if d.status not in EDITABLE_STATUSES:
+        raise DomainError(409, "DRAFT_LOCKED", f"Rascunho em {d.status} não pode ser alterado.")
+    if d.version != expected_version:
+        raise DomainError(409, "VERSION_CONFLICT", "Rascunho alterado por outra pessoa. Recarregue antes de continuar.")
+    info = resolver_operacao(s, d, core=core, user_id=user_id, now=now, trace_id=trace_id)
+    d.issues, d.validated_version, d.validated_at = [], None, None
+    d.version += 1
+    d.updated_at = now
+    return info
 
 
 def recipient_from_document(s: Session, *, company: CompanyInfo, core: CoreClient, document_id: str) -> dict:
@@ -349,27 +490,51 @@ def profile_issues(d: Draft, profile: dict | None) -> list[dict]:
     if data and ((vf and data < vf) or (vt and data > vt)):
         out.append(_issue("service_profile_id", "SERVICE_PROFILE_OUT_OF_VALIDITY",
                           f"Data da prestação fora da vigência do perfil ({vf or '…'} a {vt or '…'})."))
-    tax = d.tax_settings or {}
-    ibs = tax.get("ibs_cbs") or {}
-    pibs = profile.get("ibs_cbs") or {}
-    diverg = [rot for rot, a, b in (
-        ("cTribNac", d.service_national_code, profile.get("national_code")),
-        ("cNBS", d.service_nbs_code, profile.get("nbs_code")),
-        ("tribISSQN", tax.get("issqn_taxation"), profile.get("issqn_taxation")),
-        ("cIndOp", ibs.get("operation_indicator"), pibs.get("operation_indicator")),
-        ("cClassTrib", ibs.get("class_code"), pibs.get("class_code")),
-    ) if b and a != b]
+    from ctrl_common import operacao
+
+    op_ = operacao_do_rascunho(d)
+    diverg = operacao.diferencas(
+        operacao.assinatura(op_["national_code"], op_["nbs_code"], op_["issqn_taxation"], op_["pis_cofins_cst"],
+                            op_["ibs_cbs"]),
+        operacao.assinatura(profile.get("national_code"), profile.get("nbs_code"), profile.get("issqn_taxation"),
+                            profile.get("pis_cofins_cst"), profile.get("ibs_cbs")))
     if diverg:
+        # Os dados do rascunho são mantidos; a operação diferente é outra configuração, com revisão própria.
         out.append(_issue("service_profile_id", "SERVICE_PROFILE_DIVERGENT",
-                          "Rascunho diverge do perfil aplicado em: " + ", ".join(diverg) + " (permitido; confira).",
-                          "warning"))
+                          f"A operação do rascunho difere da configuração \"{nome}\" em: " + ", ".join(diverg)
+                          + ". Os dados do rascunho foram mantidos; registre a configuração desta operação para "
+                            "revisão (“Registrar configuração da operação”).", "warning"))
+    return out
+
+
+def operacao_issues(d: Draft) -> list[dict]:
+    """Situação da configuração tributária da operação (nota de referência ou preenchimento manual)."""
+    info = (d.origin or {}).get("operation") or {}
+    out: list[dict] = []
+    if info.get("resolution") == "NOT_REGISTERED":
+        faltas = "; ".join(f"{e.get('field')}: {e.get('message')}" for e in info.get("errors") or [])
+        out.append(_issue("service_profile_id", "OPERATION_NOT_REGISTERED",
+                          "A configuração tributária desta operação ainda não pôde ser registrada para revisão"
+                          + (f" ({faltas})" if faltas else "") + ". Corrija e registre novamente.", "warning"))
+    elif info.get("resolution") == "INACTIVE_EQUIVALENT" and not d.service_profile_id:
+        out.append(_issue("service_profile_id", "OPERATION_CONFIG_INACTIVE",
+                          f"A configuração equivalente \"{info.get('profile_name')}\" foi inativada: reative-a em "
+                          "Configurações → Perfis de serviço (volta para revisão) ou ajuste a operação."))
+    if d.service_profile_id and d.service_profile_id == info.get("profile_id"):
+        for div in info.get("divergent_from") or []:
+            out.append(_issue("service_profile_id", "OPERATION_VARIANT",
+                              f"Variante do perfil aprovado \"{div.get('name')}\": difere em "
+                              f"{', '.join(div.get('fields') or [])}. Exige revisão e aprovação próprias; o perfil "
+                              "aprovado não foi alterado.", "info"))
     return out
 
 
 def validate_draft(d: Draft, company: CompanyInfo, customer: dict | None, now: datetime,
                    profile: dict | None = None, *, production_emission_enabled: bool = False) -> list[dict]:
     """Validações locais e de formato do leiaute verificado. Não autoriza nem transmite."""
-    issues: list[dict] = profile_issues(d, profile)
+    from .referencia import pendencias_atuais
+
+    issues: list[dict] = profile_issues(d, profile) + operacao_issues(d) + pendencias_atuais(d)
     if company.environment == "production":
         # Produção: o perfil aprovado precisa corresponder EXATAMENTE ao rascunho e à versão revisada.
         for i in issues:
@@ -481,8 +646,8 @@ def _official_issues(d: Draft, company: CompanyInfo, production_emission_enabled
         out.append(_issue("environment", "PRODUCTION_REAL", "Produção: a NFS-e emitida terá validade fiscal.", "info"))
         if not d.service_profile_id:
             out.append(_issue("service_profile_id", "SERVICE_PROFILE_REQUIRED_PRODUCTION",
-                              "Em produção, aplique um perfil de serviço APROVADO (Configurações → Perfis de serviço) "
-                              "antes de agendar."))
+                              "Em produção, a operação precisa de configuração tributária APROVADA: registre a "
+                              "configuração desta operação (ou aplique um perfil aprovado) e aprove-a antes de agendar."))
     else:
         out.append(_issue("environment", "HOMOLOGATION", "Produção Restrita: NFS-e sem validade fiscal.", "info"))
     if not d.service_date:
@@ -579,6 +744,7 @@ def draft_out(d: Draft) -> dict:
         "service_date": d.service_date,
         "service_profile_id": d.service_profile_id,
         "service_profile_version": d.service_profile_version,
+        "origin": {k: v for k, v in (d.origin or {}).items() if k != "copied_operation"} or None,
         "service": {
             "national_code": d.service_national_code,
             "municipal_code": d.service_municipal_code,

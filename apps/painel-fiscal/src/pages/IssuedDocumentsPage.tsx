@@ -103,8 +103,9 @@ const DuplicateAction: React.FC<{ doc: FiscalDocument; onNavigate: (r: string) =
   return (
     <section aria-label="Usar como referência" style={{ borderTop: '1px solid var(--color-border)', paddingTop: '0.75rem' }}>
       <p style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)', marginBottom: '0.5rem' }}>
-        Cria um rascunho novo com cliente, serviço e valores desta nota. Número, chave, eventos e situação fiscal não são
-        copiados, e esta nota não é alterada.
+        Cria um rascunho novo com os dados do XML oficial desta nota (cliente, serviço, local, obra, valores e tributos).
+        Número, chave, protocolo, assinatura, eventos e situação fiscal não são copiados, e esta nota não é alterada. O
+        tratamento tributário não é aprovado automaticamente: a configuração da operação passa por revisão e aprovação.
       </p>
       <Button variant="secondary" isLoading={busy} disabled={busy || registering} onClick={create}>
         <Icon name="draft" size={16} /> Usar como referência para novo rascunho

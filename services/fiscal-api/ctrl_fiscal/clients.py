@@ -131,6 +131,16 @@ class CoreClient:
             return None
         raise UpstreamError("CORE_UNAVAILABLE", r.status_code)
 
+    def resolve_operation(self, company_id: str, operation: dict, origin: dict, field_sources: dict,
+                          actor_id: str | None) -> dict:
+        """Configuração tributária da operação: reutiliza a aprovada equivalente, vincula a pendente equivalente ou
+        cria variante pendente. 422 (códigos inválidos/ausentes) volta como UpstreamError com os detalhes."""
+        r = self._post(f"/internal/v1/companies/{company_id}/service-profiles/resolve-operation",
+                       {"actor_id": actor_id, "operation": operation, "origin": origin, "field_sources": field_sources})
+        if r.status_code == 200:
+            return r.json()
+        raise UpstreamError(_safe_json(r).get("code", "CORE_UNAVAILABLE"), r.status_code, _safe_json(r))
+
     def prepare_service_profiles(self, company_id: str, proposals: list[dict], actor_id: str | None,
                                  actor_type: str = "user") -> dict:
         r = self._post(f"/internal/v1/companies/{company_id}/service-profiles/prepare",

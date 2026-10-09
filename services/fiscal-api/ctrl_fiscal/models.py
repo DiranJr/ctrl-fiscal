@@ -176,6 +176,9 @@ class Draft(Base):
     # Perfil de serviço aplicado e a VERSÃO vigente na aplicação (o conteúdo de cada versão fica no core).
     service_profile_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     service_profile_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Origem do rascunho: nota de referência (documento, campos copiados do XML oficial e o que NÃO foi copiado, com
+    # o motivo) ou preenchimento manual; e a resolução da configuração tributária da operação.
+    origin: Mapped[dict | None] = mapped_column(JsonType, nullable=True)
     discount_unconditional: Mapped[Decimal | None] = mapped_column(MONEY, nullable=True)  # vDescCondIncond/vDescIncond
     discount_conditional: Mapped[Decimal | None] = mapped_column(MONEY, nullable=True)  # vDescCondIncond/vDescCond
     validated_version: Mapped[int | None] = mapped_column(Integer, nullable=True)  # versão a que `issues` se refere
@@ -201,6 +204,8 @@ class Batch(Base):
     timezone: Mapped[str] = mapped_column(String(64))
     scheduled_local: Mapped[str] = mapped_column(String(40))  # ISO com offset, como informado
     total: Mapped[int] = mapped_column(Integer)
+    # NOW = "Emitir agora" (processamento imediato, instante do servidor) | SCHEDULED = "Agendar emissão".
+    mode: Mapped[str] = mapped_column(String(16), default="SCHEDULED", server_default="SCHEDULED")
     created_by: Mapped[str] = mapped_column(String(36))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime())
 

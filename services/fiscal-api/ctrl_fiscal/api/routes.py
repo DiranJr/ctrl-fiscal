@@ -410,6 +410,20 @@ def patch_draft(draft_id: str, body: sc.DraftPatch, request: Request, cc: Compan
     return drafts_d.draft_out(d)
 
 
+@router.post("/drafts/{draft_id}/operation-config", response_model=sc.DraftOut, responses=E, tags=["drafts"],
+             summary="Configuração tributária da operação do rascunho: reutiliza a aprovada equivalente ou registra "
+                     "a variante para revisão. Não aprova, não agenda e não emite.")
+def register_operation(draft_id: str, body: sc.OperationRegister, request: Request,
+                       cc: CompanyCtx = Depends(company_ctx("prepare")), s: Session = Depends(db_session)) -> dict:
+    c = ctx(request)
+    d = drafts_d.get_draft(s, cc.company, draft_id, lock=True)
+    _core_guard(lambda: drafts_d.registrar_operacao(s, d, expected_version=body.expected_version, core=c.core,
+                                                    user_id=cc.user_id, now=c.clock.now(),
+                                                    trace_id=trace_id_for(request)))
+    s.commit()
+    return drafts_d.draft_out(d)
+
+
 @router.post("/drafts/{draft_id}/validate", response_model=sc.ValidationOut, responses=E, tags=["drafts"])
 def validate(draft_id: str, request: Request, cc: CompanyCtx = Depends(company_ctx("prepare")),
              s: Session = Depends(db_session)) -> dict:
@@ -458,16 +472,22 @@ def create_batch(body: sc.BatchCreate, request: Request, cc: CompanyCtx = Depend
     if "emit" not in cc.permissions:  # agendar um lote = pedir transmissão: exige também "emit"
         raise ProblemError(403, "PERMISSION_DENIED", "Permissão necessária: emit.")
 
+    if body.mode == "SCHEDULED" and body.scheduled_at is None:
+        raise ProblemError(422, "SCHEDULE_REQUIRED", "Informe a data/hora do agendamento (ou use emitir agora).")
+
     def action() -> tuple[int, dict]:
+        # Emitir agora: o instante é o do SERVIDOR (o do navegador é ignorado); o worker o pega no próximo ciclo.
+        quando = now if body.mode == "NOW" else body.scheduled_at
         b = _core_guard(lambda: batches_d.create_batch(
             s, company=cc.company, core=c.core, user_id=cc.user_id,
-            drafts=[d.model_dump() for d in body.drafts], scheduled_at=body.scheduled_at, timezone_name=body.timezone,
+            drafts=[d.model_dump() for d in body.drafts], scheduled_at=quando, timezone_name=body.timezone,
             now=now, max_drafts=c.settings.max_batch_drafts,
             past_tolerance_seconds=c.settings.schedule_past_tolerance_seconds, trace_id=trace_id_for(request),
             production_emission_enabled=c.settings.production_emission_enabled,
-            production_confirmation=body.production_confirmation.model_dump() if body.production_confirmation else None))
-        return 202, {"batch_id": b.id, "status": "SCHEDULED", "scheduled_at": b.scheduled_at.astimezone(timezone.utc).isoformat(),
-                     "total": b.total}
+            production_confirmation=body.production_confirmation.model_dump() if body.production_confirmation else None,
+            mode=body.mode))
+        return 202, {"batch_id": b.id, "status": "SCHEDULED", "mode": b.mode,
+                     "scheduled_at": b.scheduled_at.astimezone(timezone.utc).isoformat(), "total": b.total}
 
     status, payload = run_idempotent(s, cc, "batches.create", key, body.model_dump(mode="json"), now, action)
     return JSONResponse(payload, status_code=status)

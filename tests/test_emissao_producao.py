@@ -13,7 +13,7 @@ import pytest
 from lxml import etree
 from sqlalchemy import select
 
-from conftest import cnpj
+from conftest import MYSQL, cnpj
 from test_official_integration import (  # noqa: F401 - fixtures reaproveitadas
     APPROX, MUN, NS, batch_items, gov, official_draft, ostack, real,
 )
@@ -178,6 +178,136 @@ def test_emissao_producao_completa_idempotente_e_sem_duplicidade(ostack, real, g
     with ostack.fiscal_sessions() as s:
         ev = s.scalar(select(AuditEvent).where(AuditEvent.action == "batch.created"))
         assert ev.details["production_confirmation"]["count"] == 1
+
+
+def _emitir_agora(ostack, real, drafts, confirmacao=..., key: str | None = None):  # noqa: ANN001, ANN202
+    """“Emitir agora”: sem scheduled_at; o instante é o do servidor."""
+    body = {"drafts": [{"id": d["id"], "expected_version": d["version"]} for d in drafts], "mode": "NOW",
+            "timezone": "America/Sao_Paulo"}
+    if confirmacao is ...:
+        confirmacao = _confirmacao(real, drafts, mode="NOW")
+    if confirmacao is not None:
+        body["production_confirmation"] = confirmacao
+    return ostack.fiscal.post(f"{F}/{real['id']}/batches",
+                              headers={**real["h"], "Idempotency-Key": key or uuid.uuid4().hex}, json=body)
+
+
+def _sefin_posts(gov) -> int:  # noqa: ANN001
+    return len([c for c in gov.posts() if c[3] == "/SefinNacional/nfse"])
+
+
+def test_emitir_agora_processa_imediatamente_sem_esperar_o_dia_01(ostack, real, gov):
+    from ctrl_fiscal.models import AuditEvent
+
+    _producao(ostack, real)
+    d = _rascunho(ostack, real, _perfil(ostack, real))
+    r = _emitir_agora(ostack, real, [d])
+    assert r.status_code == 202, r.text
+    assert r.json()["mode"] == "NOW"
+    from datetime import datetime
+
+    assert abs((datetime.fromisoformat(r.json()["scheduled_at"]) - ostack.clock.now()).total_seconds()) < 1
+    ostack.worker().run_emissions()  # sem avançar o relógio: processado no ciclo seguinte do worker
+    assert _sefin_posts(gov) == 1
+    b = ostack.fiscal.get(f"{F}/{real['id']}/batches/{r.json()['batch_id']}", headers=real["h"]).json()
+    assert b["mode"] == "NOW" and b["items"][0]["status"] == "AUTHORIZED", b
+    with ostack.fiscal_sessions() as s:
+        ev = s.scalar(select(AuditEvent).where(AuditEvent.action == "batch.created"))
+        assert ev.details["mode"] == "NOW" and ev.details["production_confirmation"]["mode"] == "NOW"
+
+
+def test_emitir_agora_exige_confirmacao_da_acao_e_da_versao_revisada(ostack, real, gov):
+    _producao(ostack, real)
+    d = _rascunho(ostack, real, _perfil(ostack, real))
+    r = _emitir_agora(ostack, real, [d], confirmacao=None)
+    assert r.status_code == 422 and r.json()["code"] == "PRODUCTION_CONFIRMATION_REQUIRED"
+    # Confirmou AGENDAR, pediu EMITIR AGORA: recusado (a ação faz parte da confirmação).
+    r = _emitir_agora(ostack, real, [d], confirmacao=_confirmacao(real, [d], mode="SCHEDULED"))
+    assert r.status_code == 409 and r.json()["code"] == "PRODUCTION_CONFIRMATION_MISMATCH"
+    assert any(e["field"] == "production_confirmation.mode" for e in r.json()["errors"])
+    # Confirmação feita e o rascunho editado depois: desatualizada.
+    antiga = _confirmacao(real, [d], mode="NOW")
+    d2 = ostack.fiscal.patch(f"{F}/{real['id']}/drafts/{d['id']}", headers=real["h"],
+                             json={"expected_version": d["version"], "amount": "1499.00"}).json()
+    r = _emitir_agora(ostack, real, [d2], confirmacao=antiga)
+    assert r.status_code == 409 and r.json()["code"] == "PRODUCTION_CONFIRMATION_MISMATCH"
+    r = _emitir_agora(ostack, real, [d], confirmacao=antiga)  # versão antiga do próprio rascunho
+    assert r.status_code == 409
+    assert _sefin_posts(gov) == 0
+
+
+def test_emitir_agora_clique_duplicado_e_agendamento_do_mesmo_rascunho(ostack, real, gov):
+    _producao(ostack, real)
+    p = _perfil(ostack, real)
+    d1, d2 = _rascunho(ostack, real, p, "100.00"), _rascunho(ostack, real, p, "200.00")
+    key = uuid.uuid4().hex
+    r1 = _emitir_agora(ostack, real, [d1], key=key)
+    r1b = _emitir_agora(ostack, real, [d1], key=key)  # clique repetido / nova tentativa após timeout
+    assert r1.status_code == r1b.status_code == 202 and r1.json()["batch_id"] == r1b.json()["batch_id"]
+    outro = _emitir_agora(ostack, real, [d1])  # outro pedido para o mesmo rascunho
+    assert outro.status_code == 409 and outro.json()["code"] == "BATCH_CONFLICT"
+    assert _agendar(ostack, real, [d1]).status_code == 409  # agendar o que já está emitindo
+    # Agendado para o dia 01 e depois "emitir agora": recusado até retirar da fila; retirado, emite uma vez só.
+    ag = _agendar(ostack, real, [d2])
+    assert ag.status_code == 202
+    r = _emitir_agora(ostack, real, [d2])
+    assert r.status_code == 409 and "retire-o da fila" in r.text
+    atual = ostack.fiscal.get(f"{F}/{real['id']}/drafts/{d2['id']}", headers=real["h"]).json()
+    w = ostack.fiscal.post(f"{F}/{real['id']}/drafts/{d2['id']}/withdraw", headers=real["h"],
+                           json={"expected_version": atual["version"]})
+    assert w.status_code == 200, w.text
+    d2n = w.json()
+    r2 = _emitir_agora(ostack, real, [d2n])
+    assert r2.status_code == 202, r2.text
+    wk = ostack.worker()
+    wk.run_emissions()
+    ostack.clock.advance(minutes=5)
+    wk.run_emissions()
+    assert _sefin_posts(gov) == 2  # uma transmissão por rascunho
+    itens = [batch_items(ostack, real, b)[0]["status"] for b in (r1.json()["batch_id"], r2.json()["batch_id"])]
+    assert itens == ["AUTHORIZED", "AUTHORIZED"]
+    assert batch_items(ostack, real, ag.json()["batch_id"])[0]["status"] == "WITHDRAWN"
+
+
+def test_emitir_agora_com_timeout_reconcilia_antes_de_reenviar(ostack, real, gov):
+    _producao(ostack, real)
+    d = _rascunho(ostack, real, _perfil(ostack, real))
+    gov.sefin_plan = ["500_after_accept"]
+    r = _emitir_agora(ostack, real, [d])
+    assert r.status_code == 202
+    w = ostack.worker()
+    w.run_emissions()
+    assert batch_items(ostack, real, r.json()["batch_id"])[0]["status"] == "AWAITING_CONFIRMATION"
+    ostack.clock.advance(minutes=15)
+    w.run_emissions()
+    assert batch_items(ostack, real, r.json()["batch_id"])[0]["status"] == "AUTHORIZED"
+    assert _sefin_posts(gov) == 1
+
+
+@pytest.mark.skipif(not MYSQL, reason="concorrência real exige MySQL")
+def test_emitir_agora_concorrente_com_agendamento_mysql(ostack, real, gov):
+    import threading
+
+    _producao(ostack, real)
+    d = _rascunho(ostack, real, _perfil(ostack, real))
+    barrier = threading.Barrier(2)
+    out: list[int] = []
+
+    def go(fn) -> None:  # noqa: ANN001
+        barrier.wait()
+        out.append(fn().status_code)
+
+    ts = [threading.Thread(target=go, args=(lambda: _emitir_agora(ostack, real, [d]),)),
+          threading.Thread(target=go, args=(lambda: _agendar(ostack, real, [d]),))]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    assert sorted(out) == [202, 409], out
+    from ctrl_fiscal.models import BatchItem
+
+    with ostack.fiscal_sessions() as s:
+        assert len(s.scalars(select(BatchItem).where(BatchItem.draft_id == d["id"])).all()) == 1
 
 
 def test_contexto_alterado_depois_do_agendamento_nao_transmite(ostack, real, gov):

@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Badge, Button, Input, Modal, Select, Textarea } from '@ctrl-fiscal/ui';
 import {
-  FieldSource, ProblemDetailsException, ServiceProfile, ServiceProfileInput, ServiceProfileVersionOut, TaxClassification,
+  FieldSource, ProblemDetailsException, ProfileEvidence, ServiceProfile, ServiceProfileInput, ServiceProfileVersionOut,
+  TaxClassification,
 } from '@ctrl-fiscal/api-client';
 import { useFiscal, logSafe } from '../../context/FiscalContext.js';
 import { ScreenSection, TableEmpty } from '../screen/ScreenSection.js';
@@ -23,9 +24,10 @@ const ORIGEM: Record<string, { label: string; className: string; title: string }
 const ACOES: Record<string, string> = {
   prepared: 'Preparado das notas', created: 'Criado', updated: 'Editado', approved: 'Aprovado', inactivated: 'Inativado',
   reactivated: 'Reativado (volta à revisão)', migrated: 'Migrado',
+  variant_prepared: 'Variante registrada a partir de um rascunho',
 };
 
-const OrigemTag: React.FC<{ src?: FieldSource }> = ({ src }) => {
+export const OrigemTag: React.FC<{ src?: FieldSource }> = ({ src }) => {
   if (!src) return null;
   const o = ORIGEM[src.origem] || { label: src.origem, className: 'pf-origem', title: '' };
   return (
@@ -78,8 +80,29 @@ function toPayload(f: FormState): ServiceProfileInput {
 
 /** Evidência das notas emitidas que sustentam o perfil (tudo lido do XML oficial). */
 const Evidencia: React.FC<{ p: ServiceProfile }> = ({ p }) => {
-  const e = p.evidence;
-  if (!e) return <p className="pf-help">Perfil manual: sem notas de referência.</p>;
+  const ev = p.evidence;
+  if (!ev) return <p className="pf-help">Perfil manual: sem notas de referência.</p>;
+  if ('tipo' in ev && ev.tipo === 'variante_operacao') {
+    // Variante de operação: nasce de UM rascunho (nota de referência ou preenchimento manual), nunca aprovada sozinha.
+    const doc = ev.origem.document;
+    return (
+      <div className="pf-evid">
+        <p className="pf-help">
+          {ev.origem.kind === 'document' && doc
+            ? <>Variante a partir da NFS-e nº <strong>{doc.number || '—'}</strong> (competência {doc.competence || '—'}), lida do XML oficial.</>
+            : <>Operação preenchida manualmente em um rascunho de Nova NFS-e.</>}
+        </p>
+        {ev.diverge_de.length > 0 && (
+          <ul className="pf-bullets">
+            {ev.diverge_de.map((x) => (
+              <li key={x.id}>Difere do perfil aprovado “{x.name}” em: {x.fields.join(', ')} (o aprovado não foi alterado).</li>
+            ))}
+          </ul>
+        )}
+      </div>
+    );
+  }
+  const e = ev as ProfileEvidence;
   const sit = Object.entries(e.situacao).map(([k, v]) => `${v} ${k === 'AUTHORIZED' ? 'autorizada(s)' : k === 'CANCELLED' ? 'cancelada(s)' : k}`).join(', ');
   return (
     <details className="pf-evid">
@@ -366,10 +389,10 @@ export const ServiceProfilesSection: React.FC = () => {
                     <ul>{avisos.map((i, k) => <li key={k}><strong>{i.label}</strong>: {i.message}</li>)}</ul>
                   </div>
                 )}
-                {(p.evidence?.divergencias?.length || 0) > 0 && (
+                {p.evidence && 'divergencias' in p.evidence && (p.evidence.divergencias?.length || 0) > 0 && (
                   <div className="pf-perfil-pend" data-severity="warning">
                     <strong>Divergências entre as notas:</strong>
-                    <ul>{p.evidence!.divergencias.map((x, k) => <li key={k}>{x.message}</li>)}</ul>
+                    <ul>{p.evidence.divergencias.map((x, k) => <li key={k}>{x.message}</li>)}</ul>
                   </div>
                 )}
                 {(infos.length > 0 || p.suggestions.length > 0) && (

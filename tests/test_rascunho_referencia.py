@@ -75,7 +75,10 @@ def test_nota_do_adn_com_tomador_sem_cadastro_reproduz_e_corrige(stack, world):
     assert d["status"] == "DRAFT" and d["version"] == 1 and d["current_item_id"] is None and d["source_document_id"] == doc["id"]
     assert d["customer_id"] == c.json()["id"]
     assert d["service"]["national_code"] == "072101" and d["service"]["location_code"] == MUN
-    assert d["service"]["nbs_code"] == "101010100" and d["amount"] == "15000.00"
+    # cNBS fictício da fixture não existe na tabela NBS vigente: NÃO é copiado e vira pendência específica.
+    assert d["service"]["nbs_code"] is None and d["amount"] == "15000.00"
+    assert {(p["field"], p["code"]) for p in d["origin"]["pending"]} >= {("service.nbs_code", "REFERENCE_CODE_INVALID")}
+    assert d["origin"]["kind"] == "document" and d["origin"]["fields"]["service.national_code"]["origem"] == "xml"
     assert d["service_date"] is None  # dCompet depende da nova prestação: fica pendente
     ts = d["tax_settings"]
     assert ts["iss_retention"] == "NOT_RETAINED" and ts["pis_cofins_cst"] == "01" and ts["issqn_taxation"] == "TAXABLE"

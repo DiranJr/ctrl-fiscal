@@ -332,6 +332,12 @@ class DraftFromDocument(Strict):
     source_document_id: str = UUIDStr
 
 
+class OperationRegister(Strict):
+    """Registra (ou reutiliza) a configuração tributária da operação ATUAL do rascunho. Nunca aprova nem emite."""
+
+    expected_version: int = Field(ge=1)
+
+
 class RecipientAddress(BaseModel):
     street: str | None
     number: str | None
@@ -459,6 +465,10 @@ class DraftOut(BaseModel):
     service_date: str | None = Field(None, description="dCompet (AAAA-MM-DD); separado do agendamento.")
     service_profile_id: str | None = Field(None, description="Perfil de serviço aplicado.")
     service_profile_version: int | None = Field(None, description="Versão do perfil vigente quando foi aplicado.")
+    origin: dict | None = Field(None, description=(
+        "Origem: kind=document (nota de referência: documento, campos copiados do XML oficial com a tag, o que não foi "
+        "copiado e por quê, pendências) ou kind=manual; operation = configuração tributária da operação "
+        "(REUSED_APPROVED, LINKED_PENDING, CREATED_VARIANT, INACTIVE_EQUIVALENT ou NOT_REGISTERED)."))
     service: ServiceOut
     amount: str
     deductions: str
@@ -662,11 +672,17 @@ class ProductionConfirmation(Strict):
     documents: list[ConfirmedDocument] = Field(min_length=1, max_length=500)
     count: int = Field(ge=1, le=500, description="Quantidade de notas do lote.")
     total_amount: str = Field(pattern=r"^\d{1,13}\.\d{2}$", description="Soma dos valores dos serviços (vServ).")
+    mode: Literal["SCHEDULED", "NOW"] = Field("SCHEDULED", description=(
+        "Ação confirmada: NOW (emitir agora) ou SCHEDULED (agendar). Precisa ser a mesma do pedido."))
 
 
 class BatchCreate(Strict):
     drafts: list[BatchDraftRef] = Field(min_length=1, max_length=500)
-    scheduled_at: AwareDatetime = Field(description="Instante com offset, ex.: 2026-11-01T00:01:00-03:00.")
+    mode: Literal["SCHEDULED", "NOW"] = Field("SCHEDULED", description=(
+        "SCHEDULED = agendar emissão para scheduled_at; NOW = emitir agora: o processamento começa imediatamente, no "
+        "instante do servidor (scheduled_at é ignorado). Mesmas validações, revisão e confirmação nos dois casos."))
+    scheduled_at: AwareDatetime | None = Field(None, description="Instante com offset (obrigatório em SCHEDULED), "
+                                                                 "ex.: 2026-11-01T00:01:00-03:00.")
     timezone: str = Field(min_length=3, max_length=64, description="Fuso IANA da empresa.")
     production_confirmation: ProductionConfirmation | None = Field(
         None, description="Obrigatória em produção: empresa, ambiente, documentos (versão e valor), quantidade e total.")
@@ -675,6 +691,7 @@ class BatchCreate(Strict):
 class BatchCreated(BaseModel):
     batch_id: str
     status: Literal["SCHEDULED"]
+    mode: Literal["SCHEDULED", "NOW"] = "SCHEDULED"
     scheduled_at: datetime
     total: int
 
@@ -715,6 +732,7 @@ class Progress(BaseModel):
 class BatchOut(BaseModel):
     id: str
     status: str = Field(description="SCHEDULED | PROCESSING | COMPLETED | COMPLETED_WITH_REJECTIONS | WITHDRAWN")
+    mode: Literal["SCHEDULED", "NOW"] = Field("SCHEDULED", description="NOW = emitir agora; SCHEDULED = agendado.")
     scheduled_at: datetime
     scheduled_local: str
     timezone: str

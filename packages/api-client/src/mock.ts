@@ -1123,6 +1123,30 @@ export class MockFiscalApiClient implements IFiscalApiClient {
     return updated;
   }
 
+  async registerOperationConfig(companyId: string, draftId: string, expectedVersion: number): Promise<Draft> {
+    // Simulação local: não há perfis no servidor; registra só a tentativa (nada é aprovado nem emitido).
+    const list = this.drafts.get(companyId) || [];
+    const idx = list.findIndex((d) => d.id === draftId);
+    if (idx < 0) {
+      throw new ProblemDetailsException({ type: 'urn:problem:not-found', title: 'Rascunho não encontrado', status: 404 });
+    }
+    const current = list[idx];
+    if (current.version !== expectedVersion) {
+      throw new ProblemDetailsException({ type: 'urn:problem:version-conflict', title: 'Conflito de versão', status: 409,
+        detail: 'Rascunho alterado por outra pessoa. Recarregue antes de continuar.' });
+    }
+    const updated: Draft = {
+      ...current,
+      origin: { ...(current.origin || { kind: 'manual' }), operation: { resolution: 'NOT_REGISTERED',
+        errors: [{ field: 'service_profile_id', code: 'SIMULATION', message: 'Simulação local: configuração não registrada no servidor.' }] } },
+      version: current.version + 1,
+      issues: [],
+      updated_at: new Date().toISOString(),
+    };
+    list[idx] = updated;
+    return updated;
+  }
+
   async validateDraft(companyId: string, draftId: string): Promise<ValidateDraftResponse> {
     const draft = await this.getDraft(companyId, draftId);
     const issues: ValidationIssue[] = [];
@@ -1151,7 +1175,7 @@ export class MockFiscalApiClient implements IFiscalApiClient {
     };
   }
 
-  async createBatch(companyId: string, req: CreateBatchRequest, idempotencyKey: string): Promise<{ batch_id: string; status: 'SCHEDULED'; scheduled_at: string; total: number }> {
+  async createBatch(companyId: string, req: CreateBatchRequest, idempotencyKey: string): Promise<{ batch_id: string; status: 'SCHEDULED'; mode?: 'NOW' | 'SCHEDULED'; scheduled_at: string; total: number }> {
     const draftsList = this.drafts.get(companyId) || [];
     const items: BatchItem[] = [];
 
@@ -1174,12 +1198,15 @@ export class MockFiscalApiClient implements IFiscalApiClient {
 
     const batchId = 'batch-' + generateUUID();
     const batchList = this.batches.get(companyId) || [];
+    const mode = req.mode || 'SCHEDULED';
+    const quando = mode === 'NOW' || !req.scheduled_at ? new Date().toISOString() : req.scheduled_at;
 
     const newBatch: Batch = {
       id: batchId,
       status: 'SCHEDULED',
-      scheduled_at: req.scheduled_at,
-      scheduled_local: req.scheduled_at,
+      mode,
+      scheduled_at: quando,
+      scheduled_local: quando,
       timezone: req.timezone,
       environment: 'mock',
       simulated: true,
@@ -1196,7 +1223,8 @@ export class MockFiscalApiClient implements IFiscalApiClient {
     return {
       batch_id: batchId,
       status: 'SCHEDULED',
-      scheduled_at: req.scheduled_at,
+      mode,
+      scheduled_at: quando,
       total: items.length,
     };
   }

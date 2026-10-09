@@ -56,7 +56,17 @@ export interface ServiceProfileIbsCbs {
 }
 export type ServiceProfileStatus = 'PENDING_REVIEW' | 'APPROVED' | 'INACTIVE';
 /** Origem de um campo: XML oficial consistente, evidência histórica de nota anterior, tabela oficial ou usuário. */
-export interface FieldSource { origem: 'xml' | 'xml_historico' | 'tabela' | 'usuario' | string; confirmado_por?: string | null; em?: string | null; nota?: string | null }
+export interface FieldSource {
+  origem: 'xml' | 'xml_historico' | 'tabela' | 'usuario' | 'simulacao' | string;
+  confirmado_por?: string | null; informado_por?: string | null; em?: string | null; nota?: string | null;
+  documento?: string | null; chave?: string | null;
+}
+/** Evidência de uma VARIANTE de operação (rascunho por nota de referência ou preenchido do zero). */
+export interface VariantEvidence {
+  tipo: 'variante_operacao';
+  origem: { kind: 'document' | 'manual' | string; draft_id?: string; document?: { id: string; number: string | null; access_key: string | null; competence: string | null } };
+  diverge_de: { id: string; name: string; version: number; fields: string[] }[];
+}
 export interface ProfilePendency { field: string; label: string; code: string; message: string; severity: 'error' | 'warning' | 'info' | string }
 export interface ProfileSuggestion { campo: string; codigo: string; texto: string; fonte: string; tipo: 'tabela_oficial' | 'dados_xml' | string }
 export interface InventoryVariant { valor?: string | null; notas: number; [k: string]: unknown }
@@ -95,7 +105,7 @@ export interface ServiceProfile {
   is_active: boolean;
   status: ServiceProfileStatus | string;
   origin_key: string | null;
-  evidence: ProfileEvidence | null;
+  evidence: ProfileEvidence | VariantEvidence | null;
   field_sources: Record<string, FieldSource>;
   suggestions: ProfileSuggestion[];
   valid_from: string | null;
@@ -698,6 +708,8 @@ export interface Draft {
   /** Perfil de serviço aplicado e a versão vigente na aplicação (registrada pelo servidor). */
   service_profile_id?: string | null;
   service_profile_version?: number | null;
+  /** Origem: nota de referência (XML oficial) ou preenchimento manual, e a configuração tributária da operação. */
+  origin?: DraftOrigin | null;
   service: DraftService;
   amount: string; // Decimal string
   deductions?: string; // Decimal string
@@ -712,6 +724,29 @@ export interface Draft {
   current_item_id?: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface DraftOriginPending {
+  field: string; code: string; message: string; severity: 'error' | 'warning' | 'info' | string;
+  while_empty?: boolean; tag?: string | null;
+}
+/** Resolução da configuração tributária da operação do rascunho. */
+export interface DraftOperation {
+  resolution: 'REUSED_APPROVED' | 'LINKED_PENDING' | 'CREATED_VARIANT' | 'INACTIVE_EQUIVALENT' | 'NOT_REGISTERED' | string;
+  profile_id?: string | null; profile_name?: string | null; profile_status?: string | null; profile_version?: number | null;
+  divergent_from?: { id: string; name: string; version: number; fields: string[] }[];
+  errors?: { field: string; code: string; message: string }[];
+  at?: string;
+}
+export interface DraftOrigin {
+  kind: 'document' | 'manual' | string;
+  document?: { id: string; status: string; number: string | null; competence: string | null; access_key: string | null };
+  /** Campo do rascunho → origem (xml, simulacao) e tag oficial lida. */
+  fields?: Record<string, { origem: string; tag?: string; confirmar?: boolean }>;
+  not_copied?: { campo: string; motivo: string }[];
+  pending?: DraftOriginPending[];
+  ibs_cbs_source?: Record<string, string>;
+  operation?: DraftOperation;
 }
 
 export interface CreateDraftRequest {
@@ -796,6 +831,8 @@ export interface BatchItem {
 export interface Batch {
   id: string;
   status: BatchStatus;
+  /** NOW = emitir agora; SCHEDULED = agendado. */
+  mode?: 'NOW' | 'SCHEDULED';
   scheduled_at: string;
   scheduled_local?: string;
   timezone: string;
@@ -818,7 +855,9 @@ export interface CreateBatchRequest {
     id: string;
     expected_version: number;
   }>;
-  scheduled_at: string;
+  /** NOW = emitir agora (instante do servidor; scheduled_at ignorado); SCHEDULED (padrão) = agendar. */
+  mode?: 'NOW' | 'SCHEDULED';
+  scheduled_at?: string;
   timezone: string;
   /** Obrigatória em PRODUÇÃO: o servidor confere empresa, ambiente, documentos (versão e valor), quantidade e total. */
   production_confirmation?: ProductionConfirmation;
@@ -830,6 +869,8 @@ export interface ProductionConfirmation {
   count: number;
   total_amount: string;
   documents: Array<{ id: string; version: number; amount: string }>;
+  /** Ação confirmada: precisa ser a mesma do pedido (confirmar agendamento não autoriza emitir agora). */
+  mode?: 'NOW' | 'SCHEDULED';
 }
 
 export interface CancelPendingOut {

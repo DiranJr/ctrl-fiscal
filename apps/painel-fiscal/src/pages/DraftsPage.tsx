@@ -5,7 +5,8 @@ import { ObraFields, ObraState, EMPTY_OBRA, obraFromService, obraToService, vali
 import { InfoComplFields, InfoComplState, EMPTY_INFO_COMPL, infoComplFromService, infoComplToPayload, validateInfoCompl } from '../components/InfoComplFields.js';
 import { ServiceProfilePicker } from '../components/ServiceProfilePicker.js';
 import { RevisaoNfse, ConfirmacaoRevisao } from '../components/RevisaoNfse.js';
-import { ConfirmacaoProducao, montarConfirmacaoProducao } from '../components/ConfirmacaoProducao.js';
+import { ConfirmacaoProducao, montarConfirmacaoProducao, ModoEmissao } from '../components/ConfirmacaoProducao.js';
+import { OperacaoTributaria } from '../components/OperacaoTributaria.js';
 import { useFiscal, logSafe } from '../context/FiscalContext.js';
 import { useUnsavedChanges } from '@ctrl-fiscal/ui';
 import {
@@ -81,7 +82,7 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
     setEditDirty(false);
     setEditingDraft(null);
   };
-  const [activeTab, setActiveTab] = useState<'geral' | 'servico' | 'iss' | 'federais'>('geral');
+  const [activeTab, setActiveTab] = useState<'geral' | 'servico' | 'iss' | 'federais' | 'operacao'>('geral');
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
   const [isConflict409, setIsConflict409] = useState(false);
@@ -403,8 +404,44 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
     }
   };
 
+  // Configuração tributária da operação do rascunho em edição (sempre sobre a versão SALVA; não aprova sozinha nem emite).
+  const [isOperatingEdit, setIsOperatingEdit] = useState(false);
+  const registerEditOperation = async (): Promise<Draft | null> => {
+    if (!currentCompany || !editingDraft) return null;
+    const d = await clients.fiscal.registerOperationConfig(currentCompany.id, editingDraft.id, editingDraft.version);
+    populateEditForm(d);
+    setActiveTab('operacao');
+    await loadDrafts();
+    return d;
+  };
+  const handleRegisterEditOperation = async () => {
+    setIsOperatingEdit(true);
+    try {
+      if (await registerEditOperation()) showToast('Configuração da operação registrada. Nada foi aprovado nem emitido.', 'success');
+    } catch (err: any) {
+      showToast(err.message || 'Erro ao registrar a configuração da operação.', 'error');
+    } finally {
+      setIsOperatingEdit(false);
+    }
+  };
+  const handleApproveEditOperation = async (p: ServiceProfile) => {
+    if (!currentCompany || !editingDraft) return;
+    setIsOperatingEdit(true);
+    try {
+      await clients.core.approveServiceProfile(currentCompany.id, p.id, p.version, `${editingDraft.competence}-01`,
+        'Aprovada na revisão do rascunho');
+      // A aprovação gera nova versão do perfil: o rascunho é vinculado de novo à versão aprovada.
+      if (await registerEditOperation()) showToast('Configuração aprovada e vinculada ao rascunho. Revise antes de agendar.', 'success');
+    } catch (err: any) {
+      showToast(err.message || 'Erro ao aprovar a configuração.', 'error');
+    } finally {
+      setIsOperatingEdit(false);
+    }
+  };
+
   // Aba de cada campo, para levar o usuário ao primeiro erro.
-  const tabOfField = (k: string): 'geral' | 'servico' | 'iss' | 'federais' => {
+  const tabOfField = (k: string): 'geral' | 'servico' | 'iss' | 'federais' | 'operacao' => {
+    if (k === 'service_profile_id') return 'operacao';
     if (k.startsWith('service')) return 'servico';
     if (k.startsWith('tax_settings.ibs_cbs') || k.startsWith('tax_settings.approx_tax')) return 'federais';
     if (k.startsWith('tax_settings')) return 'iss';
@@ -608,12 +645,13 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
     setScheduleDateTime(target.localInputString);
   };
 
-  // Confirmar Agendamento de Lote
+  // Emitir agora ou agendar o lote (as duas ações exigem revisão e confirmação; mesmas validações no servidor)
+  const [batchMode, setBatchMode] = useState<ModoEmissao>('NOW');
   const handleConfirmBatchScheduling = async () => {
     if (!currentCompany || selectedDraftIds.size === 0 || !batchReviewConfirmed || (isProd && !prodConfirmed)) return;
     const companyId = currentCompany.id;
     const timezone = currentCompany.timezone;
-    if (!scheduleDateTime) {
+    if (batchMode === 'SCHEDULED' && !scheduleDateTime) {
       showToast('Selecione a data e hora do agendamento.', 'error');
       return;
     }
@@ -626,26 +664,30 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
         expected_version: d.version,
       }));
 
-      const scheduledAtIso = parseLocalScheduleToUtcIso(scheduleDateTime, timezone);
-      const idempotencyKey = `batch-${companyId}-${Date.now()}`;
+      const scheduledAtIso = batchMode === 'SCHEDULED' ? parseLocalScheduleToUtcIso(scheduleDateTime, timezone) : undefined;
+      // Chave estável para o MESMO pedido (mesmas versões e ação): clique repetido devolve o mesmo lote.
+      const idempotencyKey = `batch-${companyId}-${batchMode}-${selectedDraftsList.map((d) => `${d.id}.${d.version}`).join('_')}`.slice(0, 200);
 
       await clients.fiscal.createBatch(
         companyId,
         {
           drafts: draftsPayload,
-          scheduled_at: scheduledAtIso,
+          mode: batchMode,
+          ...(scheduledAtIso ? { scheduled_at: scheduledAtIso } : {}),
           timezone,
           ...(isProd ? {
             production_confirmation: montarConfirmacaoProducao(currentCompany.cnpj, selectedDraftsList.map((d) => ({
               id: d.id, version: d.version, amount: d.amount, descricao: d.customer?.name || d.customer_name || 'Tomador',
-            }))),
+            })), batchMode),
           } : {}),
         },
         idempotencyKey
       );
       if (!isSameCompany(companyId)) return; // empresa trocada durante o envio: resposta ignorada
 
-      showToast(`Lote com ${selectedDraftsList.length} nota(s) agendado com sucesso!`, 'success');
+      showToast(batchMode === 'NOW'
+        ? `Emissão de ${selectedDraftsList.length} nota(s) iniciada agora. Acompanhe em Agendamentos.`
+        : `Lote com ${selectedDraftsList.length} nota(s) agendado com sucesso!`, 'success');
       setIsScheduleModalOpen(false);
       setSelectedDraftIds(new Set());
       await refreshCounters();
@@ -905,10 +947,11 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
               }
               setBatchReviewConfirmed(false);
               setProdConfirmed(false);
+              setBatchMode('NOW');
               setIsScheduleModalOpen(true);
             }}
           >
-            ⏰ Agendar Lote ({selectedDraftIds.size})
+            ⏰ Emitir ou agendar ({selectedDraftIds.size})
           </Button>
 
           <Button variant="primary" onClick={() => onNavigate('nova-nfse')}>
@@ -950,7 +993,11 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
             </div>
           }
         >
-          <div className="pf-form pf-form-stack" onChangeCapture={() => { if (!editDirtyRef.current) setEditDirty(true); }} style={{ gap: '1.25rem' }}>
+          <div className="pf-form pf-form-stack" onChangeCapture={(e) => {
+            // Marcações do painel da configuração da operação não editam o rascunho.
+            if ((e.target as HTMLElement).closest?.('[data-no-dirty]')) return;
+            if (!editDirtyRef.current) setEditDirty(true);
+          }} style={{ gap: '1.25rem' }}>
             {/* Banner de Erro ou Conflito 409 */}
             {editError && (
               <Alert variant="error" title={isConflict409 ? 'Conflito de Versão (HTTP 409)' : 'Erro ao Salvar'}>
@@ -975,6 +1022,7 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
                 { id: 'servico', label: '🛠️ Serviço & Obra' },
                 { id: 'iss', label: '🏛️ Tributos e Retenções' },
                 { id: 'federais', label: '📊 TotTrib & Reforma IBS/CBS' },
+                { id: 'operacao', label: '🧾 Configuração da operação' },
               ].map((tab) => {
                 const tabErrors = Object.entries(editFieldErrors).filter(([k, v]) => v && tabOfField(k) === tab.id).length;
                 return (
@@ -1256,6 +1304,13 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
                 </section>
               </div>
             )}
+
+            {/* ABA 5: configuração tributária da operação (nota de referência ou preenchimento manual) */}
+            {activeTab === 'operacao' && editingDraft && (
+              <OperacaoTributaria draft={editingDraft} busy={isOperatingEdit}
+                onRegister={handleRegisterEditOperation} onApprove={handleApproveEditOperation}
+                blockedReason={editDirty ? 'Há alterações não salvas: salve o rascunho antes de registrar ou aprovar a configuração desta operação.' : null} />
+            )}
           </div>
         </Modal>
       )}
@@ -1264,8 +1319,8 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
       <Modal
         isOpen={isScheduleModalOpen}
         onClose={() => setIsScheduleModalOpen(false)}
-        title="Agendar Transmissão de Lote"
-        description={`Programação da fila para ${selectedDraftIds.size} rascunho(s) selecionado(s).`}
+        title="Emitir ou agendar"
+        description={`Transmissão de ${selectedDraftIds.size} rascunho(s) selecionado(s): agora ou na data agendada.`}
         maxWidth="900px"
         footer={
           <>
@@ -1274,9 +1329,9 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
             </Button>
             <Button variant="primary" isLoading={isSchedulingBatch} disabled={!batchReviewConfirmed || (isProd && !prodConfirmed)}
               onClick={handleConfirmBatchScheduling}
-              title={!batchReviewConfirmed ? 'Marque “Conferi os dados acima” para agendar'
+              title={!batchReviewConfirmed ? 'Marque “Conferi os dados acima” para continuar'
                 : isProd && !prodConfirmed ? 'Confirme a emissão em produção' : undefined}>
-              Confirmar Agendamento do Lote
+              {batchMode === 'NOW' ? 'Emitir agora' : 'Confirmar Agendamento do Lote'}
             </Button>
           </>
         }
@@ -1284,6 +1339,17 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
         <div className="pf-form pf-form-stack" style={{ gap: '1.25rem' }}>
           <section className="pf-subpanel" aria-label="Data e hora do agendamento">
             <h3 className="pf-subpanel-title">Quando transmitir</h3>
+            <label className="pf-confirm">
+              <input type="radio" name="batch-mode" checked={batchMode === 'NOW'}
+                onChange={() => { setBatchMode('NOW'); setProdConfirmed(false); }} />
+              <span><strong>Emitir agora</strong> — o processamento começa imediatamente após a confirmação.</span>
+            </label>
+            <label className="pf-confirm">
+              <input type="radio" name="batch-mode" checked={batchMode === 'SCHEDULED'}
+                onChange={() => { setBatchMode('SCHEDULED'); setProdConfirmed(false); }} />
+              <span><strong>Agendar emissão</strong> para a data e hora abaixo.</span>
+            </label>
+            {batchMode === 'SCHEDULED' && (<>
             <div>
               <Button variant="outline" size="sm" onClick={handleSetNextMonthShortcut}>
                 Próximo mês, dia 01 às 00:01
@@ -1302,6 +1368,7 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
                 helperText={`Fuso horário aplicado: ${currentCompany?.timezone || 'America/Sao_Paulo'}`}
               />
             </div>
+            </>)}
           </section>
 
           <section className="pf-form-stack" aria-label="Revisão das notas do lote">
@@ -1333,7 +1400,8 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
           </section>
 
           <Alert variant="info">
-            O horário agendado marca o momento em que os itens se tornam elegíveis para transmissão automática pelo worker.
+            Emitir agora: os itens entram na fila imediatamente. Agendar: tornam-se elegíveis no horário escolhido. Um
+            rascunho só entra na fila uma vez; resultado incerto é consultado na Sefin antes de qualquer reenvio.
             Um cabeçalho Idempotency-Key estável é gerado para prevenir duplicidade de envio.
           </Alert>
 
@@ -1343,7 +1411,8 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
               docs={drafts.filter((d) => selectedDraftIds.has(d.id)).map((d) => ({
                 id: d.id, version: d.version, amount: d.amount, descricao: d.customer?.name || d.customer_name || 'Tomador',
               }))}
-              checked={prodConfirmed} onChange={setProdConfirmed} />
+              checked={prodConfirmed} onChange={setProdConfirmed} modo={batchMode}
+              quando={batchMode === 'SCHEDULED' ? scheduleDateTime.replace('T', ' ') : undefined} />
           )}
         </div>
       </Modal>

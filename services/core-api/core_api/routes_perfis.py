@@ -363,6 +363,133 @@ def internal_profile(company_id: str, profile_id: str, request: Request, s: Sess
             "blocking": ps.bloqueios(p, company, hoje)}
 
 
+class OperationIn(Strict):
+    national_code: str | None = Field(None, max_length=6)
+    nbs_code: str | None = Field(None, max_length=9)
+    issqn_taxation: str | None = Field(None, max_length=16)
+    pis_cofins_cst: str | None = Field(None, max_length=2)
+    ibs_cbs: dict | None = None
+
+
+class ResolveOperationIn(Strict):
+    actor_id: str | None = Field(None, max_length=64)
+    operation: OperationIn
+    origin: dict = Field(description="kind=document (nota de referência) | manual; documento, rascunho.")
+    field_sources: dict = Field(default_factory=dict)
+    create: bool = Field(True, description="false = só procura configuração equivalente (não cria variante).")
+
+
+def _sig(p: ServiceProfile) -> dict:
+    from ctrl_common import operacao
+
+    return operacao.assinatura(p.national_code, p.nbs_code, p.issqn_taxation, p.pis_cofins_cst, p.ibs_cbs)
+
+
+def _codigos_invalidos(op_: OperationIn) -> list[dict]:
+    """Códigos que não podem compor uma configuração: inexistentes nas tabelas oficiais ou incoerentes entre si."""
+    errs = []
+    if not op_.national_code:
+        errs.append({"field": "national_code", "code": "REQUIRED", "message": "Informe o cTribNac da operação."})
+    elif not dominios.servico_nacional(op_.national_code):
+        errs.append({"field": "national_code", "code": "E0310", "message": "cTribNac inexistente na lista nacional."})
+    if op_.nbs_code and not dominios.nbs(op_.nbs_code):
+        errs.append({"field": "nbs_code", "code": "E0316", "message": "cNBS inexistente na tabela NBS."})
+    if op_.issqn_taxation and op_.issqn_taxation not in ps.ISSQN:
+        errs.append({"field": "issqn_taxation", "code": "INVALID", "message": "tribISSQN inválido."})
+    ibs = op_.ibs_cbs or {}
+    if ibs.get("operation_indicator") and not dominios.cindop_valido(ibs["operation_indicator"]):
+        errs.append({"field": "ibs_cbs.operation_indicator", "code": "E0901", "message": "cIndOp fora do Anexo C."})
+    c = ps.classificacao(ibs.get("class_code")) if ibs.get("class_code") else None
+    if ibs.get("class_code") and c is None:
+        errs.append({"field": "ibs_cbs.class_code", "code": "E0958",
+                     "message": "cClassTrib inexistente na tabela oficial para NFS-e."})
+    elif c is not None and ibs.get("cst") and ibs["cst"] != c["cst"]:
+        errs.append({"field": "ibs_cbs.cst", "code": "E0959", "message": "CST deve ser os 3 primeiros dígitos do "
+                                                                      "cClassTrib."})
+    return errs
+
+
+@internal.post("/companies/{company_id}/service-profiles/resolve-operation")
+def resolve_operation(company_id: str, body: ResolveOperationIn, request: Request,
+                      s: Session = Depends(db_session)) -> dict:
+    """Configuração tributária de UMA operação (rascunho por nota de referência ou preenchido do zero).
+
+    1. Configuração APROVADA equivalente (mesma assinatura de códigos oficiais) → reutilizada.
+    2. Senão, configuração pendente equivalente → vinculada (sem duplicar).
+    3. Senão, cria uma VARIANTE pendente de revisão com os dados da operação; perfis existentes (aprovados ou não)
+       NUNCA são alterados. As divergências em relação aos perfis aprovados do mesmo serviço são devolvidas.
+    Equivalente INATIVADA não é reativada nem duplicada: volta como pendência para decisão do usuário."""
+    from ctrl_common import operacao
+
+    c = ctx(request)
+    c.service_auth.authenticate(request, "service_profiles:prepare")
+    company = s.get(Company, company_id)
+    if company is None:
+        raise ProblemError(404, "COMPANY_NOT_FOUND", "Empresa não encontrada.")
+    errs = _codigos_invalidos(body.operation)
+    if errs:
+        raise ProblemError(422, "OPERATION_CODES_INVALID", "A operação ainda não tem códigos válidos para compor uma "
+                                                           "configuração tributária.", errors=errs)
+    op_ = body.operation
+    ibs = {k: v for k, v in (op_.ibs_cbs or {}).items() if k in ("operation_indicator", "cst", "class_code", "regular")
+           and v not in (None, "", {})} or None
+    sig = operacao.assinatura(op_.national_code, op_.nbs_code, op_.issqn_taxation, op_.pis_cofins_cst, ibs)
+    perfis = list(s.scalars(select(ServiceProfile).where(ServiceProfile.company_id == company_id)
+                            .order_by(ServiceProfile.created_at, ServiceProfile.id)))
+    iguais = [p for p in perfis if _sig(p) == sig]
+    aprovados_servico = [p for p in perfis if p.status == "APPROVED" and p.national_code == op_.national_code
+                         and (p.nbs_code or None) == (op_.nbs_code or None)]
+    diverge = [{"id": p.id, "name": p.name, "version": p.version, "fields": operacao.diferencas(_sig(p), sig)}
+               for p in aprovados_servico if _sig(p) != sig]
+    hoje = c.clock.now().date()
+
+    def saida(p: ServiceProfile | None, resolucao: str) -> dict:
+        perfil = None if p is None else {**ps.snapshot(p), "id": p.id, "version": p.version,
+                                         "blocking": ps.bloqueios(p, company, hoje)}
+        return {"resolution": resolucao, "profile": perfil, "divergent_from": diverge, "signature": sig}
+
+    aprovado = sorted((p for p in iguais if p.status == "APPROVED"), key=lambda p: p.approved_at or p.created_at)
+    if aprovado:
+        return saida(aprovado[-1], "REUSED_APPROVED")
+    pendente = [p for p in iguais if p.status == "PENDING_REVIEW"]
+    if pendente:
+        return saida(pendente[0], "LINKED_PENDING")
+    if iguais:  # só inativas
+        return saida(iguais[0], "INACTIVE_EQUIVALENT")
+    if not body.create:
+        return saida(None, "NOT_FOUND")
+    now = c.clock.now()
+    key = operacao.chave(sig)
+    ctn = op_.national_code or ""
+    nome = (f"{ctn[:2]}.{ctn[2:4]}.{ctn[4:]} · {dominios.nbs(op_.nbs_code) or 'sem NBS'} — operação "
+            f"{(ibs or {}).get('operation_indicator') or 's/ cIndOp'}/{(ibs or {}).get('class_code') or 's/ cClassTrib'}")
+    p = ServiceProfile(company_id=company_id, name=nome[:120], national_code=op_.national_code,
+                       nbs_code=op_.nbs_code or None, issqn_taxation=op_.issqn_taxation or None,
+                       pis_cofins_cst=op_.pis_cofins_cst or None, ibs_cbs=ibs, is_active=True,
+                       status="PENDING_REVIEW", version=1, origin_key=key,
+                       evidence={"tipo": "variante_operacao", "origem": body.origin, "diverge_de": diverge},
+                       field_sources=body.field_sources,
+                       source=("Variante a partir da nota de referência (XML oficial)"
+                               if body.origin.get("kind") == "document" else "Operação preenchida manualmente"),
+                       created_by=body.actor_id, updated_by=body.actor_id, created_at=now, updated_at=now)
+    try:
+        with s.begin_nested():
+            s.add(p)
+            s.flush()
+    except IntegrityError:  # a mesma variante foi registrada em paralelo: usa a que venceu
+        s.expire_all()
+        outro = s.scalar(select(ServiceProfile).where(ServiceProfile.company_id == company_id,
+                                                      ServiceProfile.origin_key == key))
+        return saida(outro, "LINKED_PENDING" if outro is not None and outro.status != "APPROVED" else "REUSED_APPROVED")
+    ps.registrar_versao(s, p, "variant_prepared", now, body.actor_id)
+    audit(s, now, "service_profile.variant_prepared", actor_id=body.actor_id, company_id=company_id,
+          target_type="service_profile", target_id=p.id,
+          details={"origin": body.origin, "diverges_from": [{"id": d["id"], "fields": d["fields"]} for d in diverge]},
+          trace_id=trace_id_for(request))
+    s.commit()
+    return saida(p, "CREATED_VARIANT")
+
+
 class ProviderCompleteIn(Strict):
     actor_id: str | None = Field(None, max_length=64)
     actor_type: str = Field("user", pattern="^(user|system)$")

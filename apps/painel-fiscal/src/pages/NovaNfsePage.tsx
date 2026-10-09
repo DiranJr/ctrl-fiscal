@@ -5,7 +5,8 @@ import { ObraFields, ObraState, EMPTY_OBRA, obraFromService, obraToService, vali
 import { InfoComplFields, InfoComplState, EMPTY_INFO_COMPL, infoComplFromService, infoComplToPayload, validateInfoCompl } from '../components/InfoComplFields.js';
 import { ServiceProfilePicker } from '../components/ServiceProfilePicker.js';
 import { RevisaoNfse, ConfirmacaoRevisao } from '../components/RevisaoNfse.js';
-import { ConfirmacaoProducao, montarConfirmacaoProducao } from '../components/ConfirmacaoProducao.js';
+import { ConfirmacaoProducao, montarConfirmacaoProducao, ModoEmissao } from '../components/ConfirmacaoProducao.js';
+import { OperacaoTributaria } from '../components/OperacaoTributaria.js';
 import { ScreenSection } from '../components/screen/ScreenSection.js';
 import { useFiscal, logSafe } from '../context/FiscalContext.js';
 import {
@@ -83,6 +84,9 @@ export const NovaNfsePage: React.FC<{ onNavigate: (route: string) => void }> = (
   const [step, setStep] = useState<1 | 2>(1);
   const [reviewConfirmed, setReviewConfirmed] = useState(false);
   const [prodConfirmed, setProdConfirmed] = useState(false);
+  // Ação final: “Emitir agora” (processamento imediato) ou “Agendar emissão” (dia 01 às 00:01). Trocar a ação desfaz a
+  // confirmação de produção, que é vinculada à ação escolhida.
+  const [emitMode, setEmitMode] = useState<ModoEmissao>('NOW');
 
   // Clientes
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -246,9 +250,11 @@ export const NovaNfsePage: React.FC<{ onNavigate: (route: string) => void }> = (
     const ap = ts?.approx_tax;
     if (ap && ap.mode !== 'NOT_INFORMED') {
       setApproxMode(ap.mode);
-      setApproxFederal(ap.federal ? (ap.mode === 'VALUES' ? formatCurrencyPtBr(ap.federal, false) : ap.federal) : '');
-      setApproxState(ap.state ? formatCurrencyPtBr(ap.state, false) : '');
-      setApproxMunicipal(ap.municipal ? formatCurrencyPtBr(ap.municipal, false) : '');
+      // Valores (R$) no formato brasileiro; percentuais exatamente como gravados.
+      const fmt = (v?: string | null) => (v ? (ap.mode === 'VALUES' ? formatCurrencyPtBr(v, false) : v) : '');
+      setApproxFederal(fmt(ap.federal));
+      setApproxState(fmt(ap.state));
+      setApproxMunicipal(fmt(ap.municipal));
       setApproxSimples(ap.simples || '');
     } else {
       setApproxMode('NOT_INFORMED');
@@ -388,7 +394,10 @@ export const NovaNfsePage: React.FC<{ onNavigate: (route: string) => void }> = (
         if (approxState.trim()) approx.state = parseCurrencyPtBrToDecimal(approxState);
         if (approxMunicipal.trim()) approx.municipal = parseCurrencyPtBrToDecimal(approxMunicipal);
       } else if (approxMode === 'PERCENT') {
-        if (approxFederal.trim()) approx.federal = approxFederal.trim();
+        const pct = (v: string) => v.trim().replace(',', '.');
+        if (approxFederal.trim()) approx.federal = pct(approxFederal);
+        if (approxState.trim()) approx.state = pct(approxState);
+        if (approxMunicipal.trim()) approx.municipal = pct(approxMunicipal);
       } else if (approxMode === 'SIMPLES_PERCENT') {
         if (approxSimples.trim()) approx.simples = approxSimples.trim();
       }
@@ -589,6 +598,49 @@ export const NovaNfsePage: React.FC<{ onNavigate: (route: string) => void }> = (
     return isSameCompany(companyId) ? saved : null;
   };
 
+  // Configuração tributária da operação (mesma nos dois fluxos): salva o rascunho e registra/reutiliza a configuração.
+  // Não aprova, não agenda e não emite; a versão do rascunho muda, então a revisão e as confirmações recomeçam.
+  const [isOperating, setIsOperating] = useState(false);
+  const registerOperation = async (): Promise<Draft | null> => {
+    if (!currentCompany) return null;
+    const companyId = currentCompany.id;
+    const saved = await persistDraft(companyId);
+    if (!saved) return null;
+    const d = await clients.fiscal.registerOperationConfig(companyId, saved.id, saved.version);
+    if (!isSameCompany(companyId)) return null;
+    setActiveDraft(d);
+    loadDraftIntoForm(d);
+    setReviewConfirmed(false);
+    setProdConfirmed(false);
+    return d;
+  };
+  const handleRegisterOperation = async () => {
+    setIsOperating(true);
+    try {
+      const d = await registerOperation();
+      if (d) showToast('Configuração da operação registrada. Nada foi aprovado nem emitido.', 'success');
+    } catch (err: any) {
+      handleApiError(err, 'Erro ao registrar a configuração da operação.', 'Rascunho com dados inválidos.');
+    } finally {
+      setIsOperating(false);
+    }
+  };
+  const handleApproveOperation = async (p: ServiceProfile) => {
+    if (!currentCompany) return;
+    setIsOperating(true);
+    try {
+      await clients.core.approveServiceProfile(currentCompany.id, p.id, p.version, `${competence}-01`,
+        'Aprovada na revisão da Nova NFS-e');
+      // A aprovação gera nova versão: o rascunho é vinculado de novo à versão aprovada.
+      const d = await registerOperation();
+      if (d) showToast('Configuração aprovada e vinculada ao rascunho. Revise e confirme antes de agendar.', 'success');
+    } catch (err: any) {
+      handleApiError(err, 'Erro ao aprovar a configuração.', 'A configuração ainda tem pendências.');
+    } finally {
+      setIsOperating(false);
+    }
+  };
+
   // Salvar Rascunho
   const handleSaveDraft = async () => {
     if (!currentCompany) return;
@@ -614,8 +666,8 @@ export const NovaNfsePage: React.FC<{ onNavigate: (route: string) => void }> = (
     }
   };
 
-  // Agendar para o dia 01 às 00:01 do próximo mês (exige a confirmação da revisão)
-  const handleScheduleForNextMonth = async () => {
+  // Emitir agora OU agendar para o dia 01 às 00:01 do próximo mês (as duas exigem a revisão e as confirmações)
+  const handleEmit = async () => {
     const isProd = currentCompany?.environment === 'production';
     if (!currentCompany || !reviewConfirmed || (isProd && !prodConfirmed)) return;
     const companyId = currentCompany.id;
@@ -629,15 +681,16 @@ export const NovaNfsePage: React.FC<{ onNavigate: (route: string) => void }> = (
       const targetDraft = await persistDraft(companyId);
       if (!targetDraft) return;
 
-      // Calcula data no dia 01 às 00:01 no fuso IANA da empresa
+      // Agendamento: dia 01 às 00:01 no fuso IANA da empresa. Emitir agora: o servidor usa o próprio relógio.
       const scheduleTarget = calculateNextMonthFirstMinute(new Date(), timezone);
-      const idempotencyKey = `batch-${companyId}-${Date.now()}`;
+      const idempotencyKey = `batch-${companyId}-${targetDraft.id}-${targetDraft.version}-${emitMode}`;
 
       await clients.fiscal.createBatch(
         companyId,
         {
           drafts: [{ id: targetDraft.id, expected_version: targetDraft.version }],
-          scheduled_at: scheduleTarget.utcIsoString,
+          mode: emitMode,
+          ...(emitMode === 'SCHEDULED' ? { scheduled_at: scheduleTarget.utcIsoString } : {}),
           timezone,
           // Produção: confirmação vinculada à versão que acabou de ser gravada com o valor EXIBIDO na revisão; se o
           // servidor tiver gravado outro valor, recusa (PRODUCTION_CONFIRMATION_MISMATCH).
@@ -645,20 +698,22 @@ export const NovaNfsePage: React.FC<{ onNavigate: (route: string) => void }> = (
             production_confirmation: montarConfirmacaoProducao(currentCompany.cnpj, [{
               id: targetDraft.id, version: targetDraft.version,
               amount: parseCurrencyPtBrToDecimal(amountInput), descricao: 'NFS-e',
-            }]),
+            }], emitMode),
           } : {}),
         },
         idempotencyKey
       );
       if (!isSameCompany(companyId)) return;
 
-      showToast(`Lote agendado no servidor para ${scheduleTarget.displayFormatted} no fuso ${timezone}. Situação: Agendado na fila.`, 'success');
+      showToast(emitMode === 'NOW'
+        ? 'Emissão iniciada: o processamento começou agora. Acompanhe o resultado em Agendamentos.'
+        : `Lote agendado no servidor para ${scheduleTarget.displayFormatted} no fuso ${timezone}. Situação: Agendado na fila.`, 'success');
       await refreshCounters();
       savedRef.current = true;
       onNavigate('agendamentos');
     } catch (err: any) {
       if (!isSameCompany(companyId)) return;
-      handleApiError(err, 'Erro ao agendar nota.', 'Erro de validação do lote pelo backend.');
+      handleApiError(err, emitMode === 'NOW' ? 'Erro ao emitir a nota.' : 'Erro ao agendar nota.', 'Erro de validação do lote pelo backend.');
     } finally {
       setIsSubmitting(false);
     }
@@ -1094,8 +1149,15 @@ export const NovaNfsePage: React.FC<{ onNavigate: (route: string) => void }> = (
               )}
 
               {approxMode === 'PERCENT' && (
-                <Input label="Alíquota Total Estimada (%)" value={approxFederal} inputMode="decimal" className="pf-money"
-                  onChange={(e) => setApproxFederal(e.target.value)} placeholder="0.00" helperText="Percentual total estimado." />
+                <>
+                  {/* pTotTrib exige os três percentuais (pTotTribFed, pTotTribEst, pTotTribMun). */}
+                  <Input label="Tributos Federais (%)" value={approxFederal} inputMode="decimal" className="pf-money"
+                    onChange={(e) => setApproxFederal(e.target.value)} placeholder="0.00" helperText="pTotTribFed" />
+                  <Input label="Tributos Estaduais (%)" value={approxState} inputMode="decimal" className="pf-money"
+                    onChange={(e) => setApproxState(e.target.value)} placeholder="0.00" helperText="pTotTribEst" />
+                  <Input label="Tributos Municipais (%)" value={approxMunicipal} inputMode="decimal" className="pf-money"
+                    onChange={(e) => setApproxMunicipal(e.target.value)} placeholder="0.00" helperText="pTotTribMun" />
+                </>
               )}
 
               {approxMode === 'SIMPLES_PERCENT' && (
@@ -1196,16 +1258,32 @@ export const NovaNfsePage: React.FC<{ onNavigate: (route: string) => void }> = (
           />
 
           <Alert variant="info" title="Aviso sobre o Ciclo de Vida Fiscal">
-            O salvamento nesta tela gera ou atualiza um <strong>Rascunho (DRAFT)</strong> no servidor. A transmissão efetiva e a obtenção de autorização governamental ocorrem somente após agendamento do lote e execução pelo worker.
+            Salvar gera ou atualiza um <strong>Rascunho</strong> no servidor e nunca transmite. A transmissão só acontece depois da sua confirmação: em <strong>Emitir agora</strong> o processamento começa imediatamente; em <strong>Agendar emissão</strong>, na data agendada.
           </Alert>
 
+          <OperacaoTributaria draft={activeDraft} busy={isOperating}
+            onRegister={handleRegisterOperation} onApprove={handleApproveOperation} />
+          <fieldset className="pf-subpanel" aria-label="Como emitir">
+            <legend className="pf-subtitle">Como emitir</legend>
+            <label className="pf-confirm">
+              <input type="radio" name="emit-mode" checked={emitMode === 'NOW'}
+                onChange={() => { setEmitMode('NOW'); setProdConfirmed(false); }} />
+              <span><strong>Emitir agora</strong> — o processamento começa imediatamente após a confirmação.</span>
+            </label>
+            <label className="pf-confirm">
+              <input type="radio" name="emit-mode" checked={emitMode === 'SCHEDULED'}
+                onChange={() => { setEmitMode('SCHEDULED'); setProdConfirmed(false); }} />
+              <span><strong>Agendar emissão</strong> para {schedulePreview ? schedulePreview.displayFormatted : '01 às 00:01'} ({currentCompany?.timezone}).</span>
+            </label>
+          </fieldset>
           <ConfirmacaoRevisao checked={reviewConfirmed} onChange={setReviewConfirmed} />
           {currentCompany?.environment === 'production' && (
             <ConfirmacaoProducao empresa={{ name: currentCompany.name, cnpj: currentCompany.cnpj }}
               docs={[{ id: activeDraft?.id || 'nova', version: activeDraft?.version || 1,
                        amount: parseCurrencyPtBrToDecimal(amountInput) || '0.00',
                        descricao: selectedCustomer?.name || 'Tomador' }]}
-              checked={prodConfirmed} onChange={setProdConfirmed} versaoAoGravar />
+              checked={prodConfirmed} onChange={setProdConfirmed} versaoAoGravar
+              modo={emitMode} quando={schedulePreview?.displayFormatted} />
           )}
 
           <div className="pf-actions-row">
@@ -1218,10 +1296,10 @@ export const NovaNfsePage: React.FC<{ onNavigate: (route: string) => void }> = (
               </Button>
               <Button variant="primary" isLoading={isSubmitting}
                 disabled={!reviewConfirmed || (currentCompany?.environment === 'production' && !prodConfirmed)}
-                onClick={handleScheduleForNextMonth}
-                title={!reviewConfirmed ? 'Marque “Conferi os dados acima” para agendar'
+                onClick={handleEmit}
+                title={!reviewConfirmed ? 'Marque “Conferi os dados acima” para continuar'
                   : currentCompany?.environment === 'production' && !prodConfirmed ? 'Confirme a emissão em produção' : undefined}>
-                Agendar Lote (01 às 00:01)
+                {emitMode === 'NOW' ? 'Emitir agora' : 'Agendar emissão (01 às 00:01)'}
               </Button>
             </div>
           </div>

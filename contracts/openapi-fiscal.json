@@ -3,7 +3,7 @@
   "info": {
     "title": "CTRL Fiscal — Fiscal API",
     "description": "NFS-e: documentos emitidos/recebidos, rascunhos, lotes agendados, importação, exportação e sincronização ADN. Ambiente `mock` é SIMULAÇÃO local, sem validade fiscal.",
-    "version": "0.9.2",
+    "version": "0.9.3",
     "x-contract": "CTRL Fiscal contrato compartilhado v0.9"
   },
   "paths": {
@@ -2856,6 +2856,152 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/DraftPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Não autenticado",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Acesso negado",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Não encontrado",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflito",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Dados inválidos",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Serviço indisponível",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/fiscal/v1/companies/{company_id}/drafts/{draft_id}/operation-config": {
+      "post": {
+        "tags": [
+          "drafts"
+        ],
+        "summary": "Configuração tributária da operação do rascunho: reutiliza a aprovada equivalente ou registra a variante para revisão. Não aprova, não agenda e não emite.",
+        "operationId": "register_operation_api_fiscal_v1_companies__company_id__drafts__draft_id__operation_config_post",
+        "parameters": [
+          {
+            "name": "draft_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Draft Id"
+            }
+          },
+          {
+            "name": "company_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Company Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperationRegister"
               }
             }
           }
@@ -5921,11 +6067,28 @@
             "minItems": 1,
             "title": "Drafts"
           },
-          "scheduled_at": {
+          "mode": {
             "type": "string",
-            "format": "date-time",
+            "enum": [
+              "SCHEDULED",
+              "NOW"
+            ],
+            "title": "Mode",
+            "description": "SCHEDULED = agendar emissão para scheduled_at; NOW = emitir agora: o processamento começa imediatamente, no instante do servidor (scheduled_at é ignorado). Mesmas validações, revisão e confirmação nos dois casos.",
+            "default": "SCHEDULED"
+          },
+          "scheduled_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Scheduled At",
-            "description": "Instante com offset, ex.: 2026-11-01T00:01:00-03:00."
+            "description": "Instante com offset (obrigatório em SCHEDULED), ex.: 2026-11-01T00:01:00-03:00."
           },
           "timezone": {
             "type": "string",
@@ -5950,7 +6113,6 @@
         "type": "object",
         "required": [
           "drafts",
-          "scheduled_at",
           "timezone"
         ],
         "title": "BatchCreate"
@@ -5965,6 +6127,15 @@
             "type": "string",
             "const": "SCHEDULED",
             "title": "Status"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "SCHEDULED",
+              "NOW"
+            ],
+            "title": "Mode",
+            "default": "SCHEDULED"
           },
           "scheduled_at": {
             "type": "string",
@@ -5995,6 +6166,16 @@
             "type": "string",
             "title": "Status",
             "description": "SCHEDULED | PROCESSING | COMPLETED | COMPLETED_WITH_REJECTIONS | WITHDRAWN"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "SCHEDULED",
+              "NOW"
+            ],
+            "title": "Mode",
+            "description": "NOW = emitir agora; SCHEDULED = agendado.",
+            "default": "SCHEDULED"
           },
           "scheduled_at": {
             "type": "string",
@@ -6309,6 +6490,16 @@
             "type": "string",
             "title": "Status",
             "description": "SCHEDULED | PROCESSING | COMPLETED | COMPLETED_WITH_REJECTIONS | WITHDRAWN"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "SCHEDULED",
+              "NOW"
+            ],
+            "title": "Mode",
+            "description": "NOW = emitir agora; SCHEDULED = agendado.",
+            "default": "SCHEDULED"
           },
           "scheduled_at": {
             "type": "string",
@@ -8726,6 +8917,19 @@
             "title": "Service Profile Version",
             "description": "Versão do perfil vigente quando foi aplicado."
           },
+          "origin": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Origin",
+            "description": "Origem: kind=document (nota de referência: documento, campos copiados do XML oficial com a tag, o que não foi copiado e por quê, pendências) ou kind=manual; operation = configuração tributária da operação (REUSED_APPROVED, LINKED_PENDING, CREATED_VARIANT, INACTIVE_EQUIVALENT ou NOT_REGISTERED)."
+          },
           "service": {
             "$ref": "#/components/schemas/ServiceOut"
           },
@@ -10180,6 +10384,22 @@
         "title": "ObraAddress",
         "description": "obra/end (TCEnderObraEvento), endereço nacional da obra — alternativa a obra_code."
       },
+      "OperationRegister": {
+        "properties": {
+          "expected_version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Expected Version"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "expected_version"
+        ],
+        "title": "OperationRegister",
+        "description": "Registra (ou reutiliza) a configuração tributária da operação ATUAL do rascunho. Nunca aprova nem emite."
+      },
       "PartyOut": {
         "properties": {
           "name": {
@@ -10345,6 +10565,16 @@
             "pattern": "^\\d{1,13}\\.\\d{2}$",
             "title": "Total Amount",
             "description": "Soma dos valores dos serviços (vServ)."
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "SCHEDULED",
+              "NOW"
+            ],
+            "title": "Mode",
+            "description": "Ação confirmada: NOW (emitir agora) ou SCHEDULED (agendar). Precisa ser a mesma do pedido.",
+            "default": "SCHEDULED"
           }
         },
         "additionalProperties": false,

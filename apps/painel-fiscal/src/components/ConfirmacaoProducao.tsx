@@ -13,10 +13,13 @@ export function totalCentavos(docs: DocumentoConfirmado[]): string {
 
 /** Corpo da confirmação conferido pelo servidor: empresa, ambiente, documentos (versão revisada e valor), quantidade
  *  e total. Qualquer edição posterior muda a versão e invalida a confirmação. */
-export function montarConfirmacaoProducao(companyCnpj: string, docs: DocumentoConfirmado[]) {
+export type ModoEmissao = 'NOW' | 'SCHEDULED';
+
+export function montarConfirmacaoProducao(companyCnpj: string, docs: DocumentoConfirmado[], mode: ModoEmissao) {
   return {
     company_cnpj: companyCnpj.replace(/[^0-9A-Za-z]/g, '').toUpperCase(),
     environment: 'production' as const,
+    mode,
     count: docs.length,
     total_amount: totalCentavos(docs),
     documents: docs.map((d) => ({ id: d.id, version: d.version, amount: d.amount })),
@@ -31,7 +34,10 @@ export const ConfirmacaoProducao: React.FC<{
   onChange: (v: boolean) => void;
   /** Nota ainda será gravada ao agendar: a versão é a que for salva com estes dados. */
   versaoAoGravar?: boolean;
-}> = ({ empresa, docs, checked, onChange, versaoAoGravar }) => (
+  /** Ação confirmada: emitir agora ou agendar (texto do agendamento). Faz parte da confirmação conferida no servidor. */
+  modo: ModoEmissao;
+  quando?: string;
+}> = ({ empresa, docs, checked, onChange, versaoAoGravar, modo, quando }) => (
   <section className="pf-subpanel" aria-label="Confirmação de emissão em produção">
     <Alert variant="warning" title="Produção: emissão com validade fiscal">
       As NFS-e serão assinadas com o certificado da empresa e enviadas à Sefin Nacional. Confira empresa, documentos e
@@ -40,6 +46,7 @@ export const ConfirmacaoProducao: React.FC<{
     <dl className="pf-dl">
       <dt>Empresa</dt><dd>{empresa.name} — CNPJ {empresa.cnpj}</dd>
       <dt>Ambiente</dt><dd><strong>Produção</strong></dd>
+      <dt>Ação</dt><dd><strong>{modo === 'NOW' ? 'Emitir agora (transmissão imediata)' : `Agendar emissão${quando ? ` para ${quando}` : ''}`}</strong></dd>
       <dt>Quantidade</dt><dd>{docs.length} nota(s)</dd>
       <dt>Valor total dos serviços</dt><dd className="ui-num" style={{ textAlign: 'left' }}>{formatCurrencyPtBr(totalCentavos(docs))}</dd>
     </dl>
@@ -50,7 +57,11 @@ export const ConfirmacaoProducao: React.FC<{
     </ul>
     <label className="pf-confirm">
       <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
-      <span>Confirmo a emissão destas {docs.length} NFS-e em PRODUÇÃO, com validade fiscal.</span>
+      <span>
+        {modo === 'NOW'
+          ? `Confirmo a emissão IMEDIATA destas ${docs.length} NFS-e em PRODUÇÃO, com validade fiscal.`
+          : `Confirmo o agendamento da emissão destas ${docs.length} NFS-e em PRODUÇÃO${quando ? ` para ${quando}` : ''}, com validade fiscal.`}
+      </span>
     </label>
   </section>
 );

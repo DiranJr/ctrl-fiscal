@@ -128,7 +128,9 @@ export interface IFiscalApiClient {
   updateDraft(companyId: string, draftId: string, req: UpdateDraftRequest): Promise<Draft>;
   withdrawDraft(companyId: string, draftId: string, expectedVersion: number): Promise<Draft>;
   validateDraft(companyId: string, draftId: string): Promise<ValidateDraftResponse>;
-  createBatch(companyId: string, req: CreateBatchRequest, idempotencyKey: string): Promise<{ batch_id: string; status: 'SCHEDULED'; scheduled_at: string; total: number }>;
+  /** Registra (ou reutiliza a aprovada) a configuração tributária da operação do rascunho. Não aprova nem emite. */
+  registerOperationConfig(companyId: string, draftId: string, expectedVersion: number): Promise<Draft>;
+  createBatch(companyId: string, req: CreateBatchRequest, idempotencyKey: string): Promise<{ batch_id: string; status: 'SCHEDULED'; mode?: 'NOW' | 'SCHEDULED'; scheduled_at: string; total: number }>;
   getBatches(companyId: string, page?: number, pageSize?: number): Promise<PaginatedResponse<Batch>>;
   getBatch(companyId: string, batchId: string): Promise<Batch>;
   cancelBatchPending(companyId: string, batchId: string): Promise<CancelPendingOut>;
@@ -1175,7 +1177,14 @@ export class HttpFiscalApiClient implements IFiscalApiClient {
     });
   }
 
-  async createBatch(companyId: string, req: CreateBatchRequest, idempotencyKey: string): Promise<{ batch_id: string; status: 'SCHEDULED'; scheduled_at: string; total: number }> {
+  async registerOperationConfig(companyId: string, draftId: string, expectedVersion: number): Promise<Draft> {
+    return this.request<Draft>(companyId, `/drafts/${draftId}/operation-config`, {
+      method: 'POST',
+      body: JSON.stringify({ expected_version: expectedVersion }),
+    });
+  }
+
+  async createBatch(companyId: string, req: CreateBatchRequest, idempotencyKey: string): Promise<{ batch_id: string; status: 'SCHEDULED'; mode?: 'NOW' | 'SCHEDULED'; scheduled_at: string; total: number }> {
     return this.request<{ batch_id: string; status: 'SCHEDULED'; scheduled_at: string; total: number }>(companyId, '/batches', {
       method: 'POST',
       headers: {

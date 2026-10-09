@@ -20,7 +20,7 @@ TERMINAL = ("AUTHORIZED", "REJECTED", "WITHDRAWN")
 def create_batch(
     s: Session, *, company: CompanyInfo, core: CoreClient, user_id: str, drafts: list[dict], scheduled_at: datetime,
     timezone_name: str, now: datetime, max_drafts: int, past_tolerance_seconds: int, trace_id: str | None,
-    production_emission_enabled: bool = False, production_confirmation: dict | None = None,
+    production_emission_enabled: bool = False, production_confirmation: dict | None = None, mode: str = "SCHEDULED",
 ) -> Batch:
     if company.environment == "production" and not production_emission_enabled:
         raise DomainError(422, "PRODUCTION_EMISSION_BLOCKED",
@@ -71,7 +71,13 @@ def create_batch(
             errors.append({"field": f"drafts[{did}]", "code": "DRAFT_OTHER_ENVIRONMENT", "message": "Rascunho de outro ambiente."})
         elif d.status != "DRAFT":
             conflict = True
-            errors.append({"field": f"drafts[{did}]", "code": "DRAFT_NOT_SCHEDULABLE", "message": f"Rascunho em estado {d.status}."})
+            # Um rascunho só entra na fila uma vez (trava por linha + troca de situação na mesma transação): emitir agora
+            # e agendar o mesmo rascunho ao mesmo tempo, ou clicar duas vezes, nunca geram duas transmissões.
+            errors.append({"field": f"drafts[{did}]", "code": "DRAFT_NOT_SCHEDULABLE",
+                           "message": f"Rascunho em estado {d.status}: já está na fila de emissão (agendado ou em "
+                                      "processamento) ou já foi emitido. Para mudar a forma de emissão, retire-o da "
+                                      "fila antes." if d.status in ("SCHEDULED", "PROCESSING", "AWAITING_CONFIRMATION")
+                           else f"Rascunho em estado {d.status}."})
         elif d.version != expected[did]:
             conflict = True
             errors.append({"field": f"drafts[{did}]", "code": "VERSION_CONFLICT", "message": "Versão diferente da revisada."})
@@ -96,11 +102,12 @@ def create_batch(
     if errors:
         raise DomainError(422, "DRAFT_INVALID", "Rascunhos com pendências de validação.", errors)
     if company.environment == "production":
-        _conferir_confirmacao(company, [found[i] for i in ids], production_confirmation or {})
+        _conferir_confirmacao(company, [found[i] for i in ids], production_confirmation or {}, mode)
 
     batch = Batch(
         company_id=company.id, environment=company.environment, scheduled_at=scheduled_at, timezone=timezone_name,
-        scheduled_local=scheduled_at.astimezone(zone).isoformat(), total=len(ids), created_by=user_id, created_at=now,
+        scheduled_local=scheduled_at.astimezone(zone).isoformat(), total=len(ids), mode=mode, created_by=user_id,
+        created_at=now,
     )
     s.add(batch)
     s.flush()
@@ -126,13 +133,13 @@ def create_batch(
     audit(s, now, "batch.created", company_id=company.id, actor_id=user_id, target_type="batch", target_id=batch.id,
           details={"total": len(ids), "scheduled_at_utc": scheduled_at.astimezone(timezone.utc).isoformat(),
                    "scheduled_at_received": scheduled_at.isoformat(), "timezone_validated": timezone_name,
-                   "scheduled_local": batch.scheduled_local, "environment": company.environment,
+                   "scheduled_local": batch.scheduled_local, "environment": company.environment, "mode": mode,
                    "production_confirmation": production_confirmation if company.environment == "production" else None},
           trace_id=trace_id)
     return batch
 
 
-def _conferir_confirmacao(company: CompanyInfo, drafts: list[Draft], conf: dict) -> None:
+def _conferir_confirmacao(company: CompanyInfo, drafts: list[Draft], conf: dict, mode: str = "SCHEDULED") -> None:
     """Produção: o que a pessoa confirmou tem de ser EXATAMENTE o lote agendado — mesma empresa e ambiente, os mesmos
     documentos nas MESMAS versões revisadas, com os mesmos valores, quantidade e total. Qualquer edição posterior
     muda a versão e exige nova revisão e confirmação."""
@@ -147,6 +154,9 @@ def _conferir_confirmacao(company: CompanyInfo, drafts: list[Draft], conf: dict)
         ("count", conf.get("count") == len(drafts)),
         ("total_amount", conf.get("total_amount") == f"{total}"),
         ("documents", conf_docs == docs),
+        # A ação confirmada (emitir agora x agendar) precisa ser a pedida: confirmar um agendamento não autoriza
+        # a emissão imediata, e vice-versa.
+        ("mode", (conf.get("mode") or "SCHEDULED") == mode),
     ) if not ok]
     if diverge:
         raise DomainError(409, "PRODUCTION_CONFIRMATION_MISMATCH",
@@ -246,6 +256,7 @@ def batch_out(b: Batch, counts: dict[str, int], items: list[BatchItem] | None = 
     out = {
         "id": b.id,
         "status": derive_status(counts, b.total),
+        "mode": b.mode or "SCHEDULED",
         "scheduled_at": b.scheduled_at,
         "scheduled_local": b.scheduled_local,
         "timezone": b.timezone,
