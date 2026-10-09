@@ -1,0 +1,77 @@
+{
+ "ambiente": "http://127.0.0.1:8098",
+ "governo": "simulado",
+ "dados": "fictícios",
+ "resultados": [
+  {
+   "teste": "preparação: perfis pendentes dos dois serviços; terceiro grupo sem perfil",
+   "resultado": "PASS",
+   "obtido": ""
+  },
+  {
+   "teste": "registro: 3 propostas, nenhum campo de perfil alterado, aprovação bloqueada",
+   "resultado": "PASS",
+   "obtido": "[{\"registered\": [{\"origin_key\": \"070201:101021100\", \"proposal\": \"PR-T-1\", \"version\": 2}], \"existing\": [], \"skipped\": []}, {\"registered\": [{\"origin_key\": \"070201:101021100\", \"proposal\": \"PR-T-2\", \"vers"
+  },
+  {
+   "teste": "rascunho: criado com dados próprios e perfil pendente aplicado",
+   "resultado": "PASS",
+   "obtido": "{\"id\":\"f8f2597a-dc3e-4073-98b7-7b511812f577\",\"customer_id\":\"85fa453a-f08c-403f-83b3-b052f2175bf3\",\"customer\":{\"id\":\"85fa453a-f08c-403f-83b3-b052f2175bf3\",\"name\""
+  },
+  {
+   "teste": "permissões: leitor 403, operador sem admin 403, outro workspace recusado — nada resolvido",
+   "resultado": "PASS",
+   "obtido": "leitor=403 operador=403 B=403 B→A=403"
+  },
+  {
+   "teste": "leitor: vê proposta, alternativas e perguntas, sem aplicar/descartar",
+   "resultado": "PASS",
+   "obtido": ""
+  },
+  {
+   "teste": "grupo sem perfil aparece como pendência explícita, sem configuração criada",
+   "resultado": "PASS",
+   "obtido": "Pendência: 2 grupos de notas emitidas sem perfil\n\nNenhuma configuração fiscal existe para estes serviços: até haver um perfil revisado e aprovado, a operação nã"
+  },
+  {
+   "teste": "admin: com proposta aberta o perfil não pode ser aprovado",
+   "resultado": "PASS",
+   "obtido": ""
+  },
+  {
+   "teste": "aplicar: exige justificativa e confirmação; aplica a alternativa e o perfil segue pendente",
+   "resultado": "PASS",
+   "obtido": "status=PENDING_REVIEW can_approve=False"
+  },
+  {
+   "teste": "descartar: registra justificativa, não altera campos e libera a aprovação (passo separado)",
+   "resultado": "PASS",
+   "obtido": ""
+  },
+  {
+   "teste": "aprovação separada: perfil aprovado pela conta administradora; outro perfil segue bloqueado",
+   "resultado": "PASS",
+   "obtido": ""
+  },
+  {
+   "teste": "histórico mostra registro, aplicação, descarte e aprovação",
+   "resultado": "PASS",
+   "obtido": ""
+  },
+  {
+   "teste": "propostas: sem violação de CSP nem erro de console",
+   "resultado": "PASS",
+   "obtido": ""
+  },
+  {
+   "teste": "auditoria: registro pelo sistema; aplicação, descarte e aprovação pela pessoa, com justificativa",
+   "resultado": "PASS",
+   "obtido": "service_profile.prepared | service_profile.proposal_registered | service_profile.proposal_registered | service_profile.proposal_applied | service_profile.proposal_discarded | service_profile.approved"
+  },
+  {
+   "teste": "rascunho preservado: dados próprios intactos; a revisão aponta que o perfil mudou desde a aplicação",
+   "resultado": "PASS",
+   "obtido": "SERVICE_PROFILE_CHANGED, SERVICE_PROFILE_DIVERGENT, REFERENCE_APPROX_DOUBTFUL, REFERENCE_IBS_CBS_ABSENT, REFERENCE_NEW_DATE, IBS_CBS_NOT_INFORMED, SIMULATION_ONLY"
+  }
+ ]
+}

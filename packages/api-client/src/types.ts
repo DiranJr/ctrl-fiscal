@@ -86,6 +86,15 @@ export interface ProfileProposal {
   registrada_em: string; registrada_por: string;
   alternativa_aplicada?: string | null; resolvida_por?: string | null; resolvida_em?: string | null; nota?: string | null;
 }
+/** Inventário dos serviços prestados (XML oficial das notas emitidas), agrupado por cTribNac + cNBS. */
+export interface ServiceInventoryGroup {
+  origin_key: string; cTribNac: string | null; cNBS: string | null;
+  descricao_cTribNac: string | null; descricao_cNBS: string | null;
+  total_notas: number; situacao: Record<string, number>; periodo: { de: string | null; ate: string | null };
+  exemplos: { numero: string | null; competencia: string | null; chave: string; situacao: string; document_id: string }[];
+  [k: string]: unknown;
+}
+export interface ServiceInventory { total_notas: number; periodo: { de: string | null; ate: string | null }; grupos: ServiceInventoryGroup[] }
 export interface ProposalResolveRequest { expected_version: number; decision: 'APPLY' | 'DISCARD'; alternative?: string | null; note: string }
 export interface InventoryVariant { valor?: string | null; notas: number; [k: string]: unknown }
 export interface ProfileEvidence {

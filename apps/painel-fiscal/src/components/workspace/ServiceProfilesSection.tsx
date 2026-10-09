@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Badge, Button, Input, Modal, Select, Textarea } from '@ctrl-fiscal/ui';
 import {
   FieldSource, ProblemDetailsException, ProfileEvidence, ProfileProposal, ProfileSuggestion, ServiceProfile,
-  ServiceProfileInput, ServiceProfileVersionOut, TaxClassification,
+  ServiceInventoryGroup, ServiceProfileInput, ServiceProfileVersionOut, TaxClassification,
 } from '@ctrl-fiscal/api-client';
 import { useFiscal, logSafe } from '../../context/FiscalContext.js';
 import { ScreenSection, TableEmpty } from '../screen/ScreenSection.js';
@@ -227,6 +227,7 @@ export const ServiceProfilesSection: React.FC = () => {
   const { currentCompany, clients, showToast, user } = useFiscal();
   const canEdit = !!currentCompany?.permissions?.includes('admin');
   const [items, setItems] = useState<ServiceProfile[]>([]);
+  const [grupos, setGrupos] = useState<ServiceInventoryGroup[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [preparing, setPreparing] = useState(false);
   const [editing, setEditing] = useState<ServiceProfile | null>(null);
@@ -251,13 +252,19 @@ export const ServiceProfilesSection: React.FC = () => {
     if (!currentCompany) return;
     setLoading(true);
     try {
-      setItems(await clients.core.listServiceProfiles(currentCompany.id));
+      const [perfis, inv] = await Promise.all([
+        clients.core.listServiceProfiles(currentCompany.id),
+        // Inventário só para apontar grupos de notas sem perfil; falha aqui não impede a revisão dos perfis.
+        clients.fiscal.getServiceInventory(currentCompany.id).catch((err) => { logSafe('inventário de serviços', err); return null; }),
+      ]);
+      setItems(perfis);
+      setGrupos(inv ? inv.grupos : null);
     } catch (err) {
       logSafe('perfis de serviço', err);
     } finally {
       setLoading(false);
     }
-  }, [currentCompany, clients.core]);
+  }, [currentCompany, clients.core, clients.fiscal]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -399,6 +406,7 @@ export const ServiceProfilesSection: React.FC = () => {
   const quem = (uid?: string | null) => (!uid ? '—' : uid === user?.id ? 'você' : `usuário ${uid.slice(0, 8)}`);
   const contagem = (s: string) => items.filter((p) => p.status === s).length;
   const visiveis = items.filter((p) => filtro === 'todos' || p.status === filtro);
+  const semPerfil = (grupos || []).filter((g) => !items.some((p) => p.origin_key === g.origin_key));
   const selClass = classes.find((c) => c.codigo === form.class_code);
 
   return (
@@ -417,6 +425,25 @@ export const ServiceProfilesSection: React.FC = () => {
         <span className="pf-help">Origem dos dados:</span>
         {Object.entries(ORIGEM).map(([k, o]) => <span key={k} className={o.className} title={o.title}>{o.label}</span>)}
       </div>
+      {semPerfil.length > 0 && (
+        <div className="pf-perfil-pend" data-severity="warning" role="status">
+          <strong>Pendência: {semPerfil.length === 1 ? '1 grupo de notas emitidas sem perfil' : `${semPerfil.length} grupos de notas emitidas sem perfil`}</strong>
+          <p className="pf-help">
+            Nenhuma configuração fiscal existe para estes serviços: até haver um perfil revisado e aprovado, a operação
+            não pode ser emitida pela plataforma. “Preparar perfis a partir das notas” só cria perfil PENDENTE de revisão.
+          </p>
+          <ul className="pf-bullets">
+            {semPerfil.map((g) => (
+              <li key={g.origin_key}>
+                <strong>cTribNac {fmtCtn(g.cTribNac)} · NBS {g.cNBS || 'ausente'}</strong>
+                {g.descricao_cNBS ? ` — ${g.descricao_cNBS}` : ''}: {g.total_notas} nota(s)
+                {g.periodo?.de ? `, competência ${g.periodo.de === g.periodo.ate ? g.periodo.de : `${g.periodo.de} a ${g.periodo.ate}`}` : ''}
+                {g.exemplos?.length ? ` (ex.: nota nº ${g.exemplos.map((e) => e.numero).filter(Boolean).slice(0, 3).join(', ')})` : ''}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {items.length > 0 && (
         <div className="pf-filtro" role="group" aria-label="Filtrar perfis por situação">
           {(['todos', 'PENDING_REVIEW', 'APPROVED', 'INACTIVE'] as const).map((s) => (
@@ -536,7 +563,7 @@ export const ServiceProfilesSection: React.FC = () => {
                   )}
                   {canEdit && p.status === 'PENDING_REVIEW' && (
                     <Button variant="primary" size="sm" disabled={!p.can_approve}
-                      title={p.can_approve ? undefined : 'Preencha o que falta para aprovar.'}
+                      title={p.can_approve ? undefined : 'Resolva o que está em “Falta para aprovar” (inclusive propostas de revisão em aberto).'}
                       onClick={() => { setApproving(p); setApproveFrom(''); setApproveNote(''); setApproveChecked(false); setApproveErr([]); }}>
                       Aprovar
                     </Button>

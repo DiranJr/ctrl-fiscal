@@ -54,6 +54,7 @@ import {
   ServiceProfileInput,
   ServiceProfilePatch,
   ProposalResolveRequest,
+  ServiceInventory,
   CertificateStatus,
   ServiceProfileVersionOut,
   PrepareProfilesResult,
@@ -894,6 +895,10 @@ export class MockFiscalApiClient implements IFiscalApiClient {
 
   async prepareServiceProfiles(_companyId: string): Promise<PrepareProfilesResult> {
     return { groups: 0, created: [], existing: [] };
+  }
+
+  async getServiceInventory(_companyId: string): Promise<ServiceInventory> {
+    return { total_notas: 0, periodo: { de: null, ate: null }, grupos: [] };
   }
 
   async getProviderDataFromDocuments(_companyId: string): Promise<ProviderDataFromDocuments> {

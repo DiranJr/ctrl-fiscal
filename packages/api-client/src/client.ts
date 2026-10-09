@@ -55,6 +55,7 @@ import {
   ServiceProfileInput,
   ServiceProfilePatch,
   ProposalResolveRequest,
+  ServiceInventory,
   CertificateStatus,
   ServiceProfileVersionOut,
   PrepareProfilesResult,
@@ -120,6 +121,8 @@ export interface IFiscalApiClient {
   getTaxClassifications(companyId: string, on: string): Promise<TaxClassificationPage>;
   /** Cria perfis PENDENTES a partir das notas emitidas (idempotente; não sobrescreve). */
   prepareServiceProfiles(companyId: string): Promise<PrepareProfilesResult>;
+  /** Serviços prestados lidos das notas emitidas (somente leitura). */
+  getServiceInventory(companyId: string): Promise<ServiceInventory>;
   getProviderDataFromDocuments(companyId: string): Promise<ProviderDataFromDocuments>;
   /** Completa só campos vazios do cadastro; divergências voltam sem alteração. */
   applyProviderDataFromDocuments(companyId: string): Promise<ProviderDataApplyResult>;
@@ -975,6 +978,10 @@ export class HttpFiscalApiClient implements IFiscalApiClient {
 
   async prepareServiceProfiles(companyId: string): Promise<PrepareProfilesResult> {
     return this.request<PrepareProfilesResult>(companyId, '/service-profiles/prepare', { method: 'POST' });
+  }
+
+  async getServiceInventory(companyId: string): Promise<ServiceInventory> {
+    return this.request<ServiceInventory>(companyId, '/service-inventory');
   }
 
   async getProviderDataFromDocuments(companyId: string): Promise<ProviderDataFromDocuments> {
