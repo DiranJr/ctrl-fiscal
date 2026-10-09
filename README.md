@@ -9,9 +9,12 @@ usuário. A plataforma foi construída para uso interno e está em evolução; a
 [Limitações atuais](#limitações-atuais-e-requisitos-para-emissão-e-cancelamento) descreve com precisão o que está
 liberado e o que continua bloqueado.
 
-> **Importante:** a **emissão** em produção está **bloqueada no código**. O **cancelamento** em produção foi
-> habilitado pelo titular com confirmação individual de cada pedido, mas não passou por homologação oficial. Os
-> testes automatizados usam um governo simulado e **não equivalem à homologação oficial**.
+> **Importante:** a **emissão** em produção está implementada atrás de uma chave própria
+> (`NFSE_PRODUCTION_EMISSION_ENABLED`, desligada por padrão) e exige, em cada lote, perfil de serviço aprovado e
+> confirmação individual. O **cancelamento** em produção foi habilitado pelo titular com confirmação individual de
+> cada pedido. Nenhum dos dois passou por homologação oficial, e **a plataforma ainda não transmitiu nenhuma DPS nem
+> evento a um ambiente oficial**. Os testes automatizados usam um governo simulado e **não equivalem à homologação
+> oficial**.
 
 ---
 
@@ -46,8 +49,8 @@ liberado e o que continua bloqueado.
 | **Exportação XLSX** da consulta | Em uso. |
 | **Clientes (tomadores)**, perfis fiscais e **perfis de serviço** por workspace (inclusive preparados a partir das notas emitidas, com revisão e aprovação) | Em uso. |
 | **Rascunhos de DPS**: edição, validação (XSD oficial + regras do Anexo I), "usar nota como referência", prévia de IBS/CBS 2026, retenções | Em uso (validação local; nada é transmitido ao salvar ou validar). |
-| **Agendamento de lotes** de emissão | Implementado; em produção a criação do lote é recusada (`PRODUCTION_EMISSION_BLOCKED`). |
-| **Emissão** (montagem e assinatura XMLDSig da DPS, fila com leases e idempotência, envio à Sefin Nacional) | Implementada para **Produção Restrita**, desligada por padrão (`NFSE_RESTRICTED_ENABLED=false`). Exercitada com governo simulado e com assinatura local de teste; **nenhuma DPS foi transmitida ao ambiente oficial pela plataforma**. **Bloqueada no código em produção.** |
+| **Agendamento de lotes** de emissão | Implementado. Em produção exige a chave `NFSE_PRODUCTION_EMISSION_ENABLED`, permissão `emit`, perfil de serviço aprovado (mesma versão aplicada ao rascunho) e a confirmação individual do lote (empresa, ambiente, documentos com versão e valor, quantidade e total), conferida no servidor; sem ela o lote é recusado. |
+| **Emissão** (montagem e assinatura XMLDSig da DPS, fila com leases e idempotência, reconciliação antes de reenviar, envio à Sefin Nacional) | Implementada para **Produção Restrita** (`NFSE_RESTRICTED_ENABLED`) e **produção** (`NFSE_PRODUCTION_EMISSION_ENABLED`), chaves independentes e desligadas por padrão. Antes de transmitir, o worker reconfere permissão, workspace ativo, ambiente e perfil. Exercitada com governo simulado e assinatura local; **nenhuma DPS foi transmitida ao ambiente oficial pela plataforma**. |
 | **Cancelamento** (eventos 101101 e 101103, pedido com confirmação individual e acompanhamento da análise fiscal) | Implementado e testado com governo simulado. Em produção depende de `NFSE_PRODUCTION_CANCELLATION_ENABLED`, **habilitado pelo titular** na configuração da VPS; cada pedido exige confirmação explícita de um usuário com a permissão `cancel`. **Não foi homologado** oficialmente. |
 | **Administração**: usuários, vínculos por empresa, SUPER_ADMIN, link de ativação de uso único, revogação de sessões | Em uso. |
 | **Certificado A1** por workspace: upload do PFX, validação da cadeia ICP-Brasil e LCR, cofre cifrado | Em uso (um certificado ativo por workspace). |
@@ -161,6 +164,7 @@ As principais:
 | `NFSE_RESTRICTED_ENABLED` | Liga a emissão em Produção Restrita (padrão `false`). |
 | `NFSE_PRODUCTION_DISTRIBUTION_ENABLED` | Leitura da distribuição ADN de produção. |
 | `NFSE_PRODUCTION_CANCELLATION_ENABLED` | Cancelamento em produção (padrão do Compose `false`; `true` nos exemplos, conforme decisão do titular; não homologado). |
+| `NFSE_PRODUCTION_EMISSION_ENABLED` | Emissão em produção, independente do cancelamento (padrão `false`, também nos exemplos); ligada explicitamente só na instalação operacional autorizada. |
 | `TRUSTED_PROXY_IP` | Único endereço cujo `X-Forwarded-For`/`X-Forwarded-Proto` o gateway aceita (`0.0.0.0` = nenhum; na VPS `10.250.250.1`). |
 | `NFSE_MOCK_ENABLED` | Governo simulado; somente testes. |
 | `DANFSE_FONT_DIR` | Pasta com fontes licenciadas do DANFSe (opcional). |
@@ -318,8 +322,11 @@ produção com valores fictícios.
 
 ## Limitações atuais e requisitos para emissão e cancelamento
 
-- **Emissão em produção: bloqueada no código.** Liberá-la exige alteração de código revisada, homologação
-  oficial concluída em Produção Restrita e decisão formal do titular.
+- **Emissão em produção:** implementada e autorizada pelo titular atrás de `NFSE_PRODUCTION_EMISSION_ENABLED`
+  (padrão `false`). Funcionalidade habilitada não significa empresa pronta: a tela de prontidão mostra as duas
+  coisas separadamente. Cada lote exige permissão `emit`, perfil de serviço **aprovado** e confirmação individual da
+  versão revisada; nenhum perfil é aprovado automaticamente. **Não homologada** oficialmente e nunca exercitada contra
+  a Sefin real: a primeira nota transmitida terá efeito fiscal real.
 - **Emissão em Produção Restrita:** implementada, porém desligada; antes de ligar são necessários certificado A1
   válido da empresa, cadastro completo do workspace (endereço, inscrição municipal, regime, série da DPS),
   parâmetros municipais conferidos e acompanhamento da primeira transmissão.

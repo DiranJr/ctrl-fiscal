@@ -135,6 +135,9 @@ services:
       # Cancelamento em produção (eventos 101101/101103): política própria, separada da emissão. Autorizado pelo
       # titular em 09/10/2026; cada pedido real exige confirmação explícita do usuário com permissão "cancel".
       NFSE_PRODUCTION_CANCELLATION_ENABLED: ${NFSE_PRODUCTION_CANCELLATION_ENABLED:-false}
+      # Emissão em produção: política própria (independente do cancelamento e da Produção Restrita), desligada por
+      # padrão; cada lote exige confirmação individual da versão revisada e perfil de serviço aprovado.
+      NFSE_PRODUCTION_EMISSION_ENABLED: ${NFSE_PRODUCTION_EMISSION_ENABLED:-false}
     secrets: [fiscal_db_password, jwt_public_key, internal_fiscal_api_to_core]
     volumes: [exports:/data/exports]
     depends_on:
@@ -187,10 +190,12 @@ services:
       INTERNAL_KEY_FISCAL_WORKER_TO_NFSE_FILE: /run/secrets/internal_fiscal_worker_to_nfse
       INTERNAL_KEY_CORE_TO_NFSE_FILE: /run/secrets/internal_core_to_nfse
       NFSE_RESTRICTED_ENABLED: ${NFSE_RESTRICTED_ENABLED:-false}
-      # Produção: apenas leitura ADN (emissão/consulta de DPS bloqueadas em código).
+      # Produção: leitura ADN (distribuição) com chave própria.
       NFSE_PRODUCTION_DISTRIBUTION_ENABLED: ${NFSE_PRODUCTION_DISTRIBUTION_ENABLED:-false}
       # Cancelamento (eventos do emitente) em produção: separado da emissão; ligado só pela variável (padrão false).
       NFSE_PRODUCTION_CANCELLATION_ENABLED: ${NFSE_PRODUCTION_CANCELLATION_ENABLED:-false}
+      # Emissão (envio e consulta de DPS) em produção: separada do cancelamento; ligada só pela variável (padrão false).
+      NFSE_PRODUCTION_EMISSION_ENABLED: ${NFSE_PRODUCTION_EMISSION_ENABLED:-false}
       # Mock só em testes automatizados; em execução fica desligado (sem fallback).
       NFSE_MOCK_ENABLED: ${NFSE_MOCK_ENABLED:-false}
       NFSE_MOCK_PAGE_SIZE: ${NFSE_MOCK_PAGE_SIZE:-3}

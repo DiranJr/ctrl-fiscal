@@ -37,6 +37,7 @@ class FiscalSettings:
     sync_interval_hours: int = 12
     # Cancelamento em PRODUÇÃO pela plataforma: política própria (separada da emissão), desligada por padrão.
     production_cancellation_enabled: bool = False
+    production_emission_enabled: bool = False  # NFSE_PRODUCTION_EMISSION_ENABLED: padrão desligada
     sync_config_recheck_seconds: int = 3600
     sync_empty_cooldown_seconds: int = 3600  # ADN: aguardar ≥1h quando não há mais documentos
     sync_max_pages_per_cycle: int = 20
@@ -88,6 +89,7 @@ class FiscalSettings:
             sync_interval_hours=env_int("SYNC_INTERVAL_HOURS", 12),
             sync_max_pages_per_cycle=env_int("SYNC_MAX_PAGES_PER_CYCLE", 20),
             production_cancellation_enabled=env_bool("NFSE_PRODUCTION_CANCELLATION_ENABLED", False),
+            production_emission_enabled=env_bool("NFSE_PRODUCTION_EMISSION_ENABLED", False),
         )
         s.validate()
         return s

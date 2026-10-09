@@ -169,6 +169,8 @@ def create_app(settings: NfseSettings, clock: Clock | None = None, mock_provider
             "capabilities": {"emission": st_emit == "READY", "distribution": st_dist == "READY",
                              "cancellation": st_event == "READY",
                              "simulated": False},
+            # policy = chave de configuração ligada; capabilities = empresa pronta (chave + certificado + contrato).
+            "policy": prov.policy(),
             "blockers": problems, "checked_at": now,
         }
 

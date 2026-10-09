@@ -17,6 +17,7 @@ class NfseSettings:
     production_distribution_enabled: bool = False
     # Cancelamento (eventos do emitente) em PRODUÇÃO: política própria, separada da emissão. Desligado por padrão.
     production_cancellation_enabled: bool = False
+    production_emission_enabled: bool = False  # NFSE_PRODUCTION_EMISSION_ENABLED: padrão desligada
     # Mock somente em testes automatizados; em execução fica desligado (sem fallback).
     mock_enabled: bool = True
     mock_page_size: int = 3
@@ -64,6 +65,7 @@ class NfseSettings:
             production_enabled=env_bool("NFSE_PRODUCTION_ENABLED", False),
             production_distribution_enabled=env_bool("NFSE_PRODUCTION_DISTRIBUTION_ENABLED", False),
             production_cancellation_enabled=env_bool("NFSE_PRODUCTION_CANCELLATION_ENABLED", False),
+            production_emission_enabled=env_bool("NFSE_PRODUCTION_EMISSION_ENABLED", False),
             mock_enabled=env_bool("NFSE_MOCK_ENABLED", False),
             mock_page_size=env_int("NFSE_MOCK_PAGE_SIZE", 3),
         )

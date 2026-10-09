@@ -30,7 +30,8 @@ export interface Workspace {
 }
 
 export interface ReadinessIssue { code: string; message: string; severity: 'error' | 'warning' | 'info' | string }
-export interface ReadinessOperation { operation: 'consulta' | 'emissao' | 'cancelamento'; ready: boolean; issues: ReadinessIssue[] }
+/** enabled = funcionalidade habilitada na instalação; ready = esta empresa pronta para a operação. */
+export interface ReadinessOperation { operation: 'consulta' | 'emissao' | 'cancelamento'; enabled?: boolean; ready: boolean; issues: ReadinessIssue[] }
 export interface ReadinessEnvironment {
   environment: 'production' | 'restricted' | string;
   certificate: { present?: boolean | null; subject_cnpj_matches?: boolean | null; not_after?: string | null; days_to_expiry?: number | null };
@@ -335,6 +336,8 @@ export interface IntegrationStatus {
     can_issue?: boolean;
     [key: string]: boolean | undefined;
   };
+  /** Chaves de configuração da instalação (funcionalidade habilitada); não indicam empresa pronta. */
+  policy?: { emission?: boolean; cancellation?: boolean; distribution?: boolean } | null;
   blockers: Array<{ code?: string; message?: string; [key: string]: string | undefined }>;
   checked_at: string;
 }
@@ -817,6 +820,16 @@ export interface CreateBatchRequest {
   }>;
   scheduled_at: string;
   timezone: string;
+  /** Obrigatória em PRODUÇÃO: o servidor confere empresa, ambiente, documentos (versão e valor), quantidade e total. */
+  production_confirmation?: ProductionConfirmation;
+}
+
+export interface ProductionConfirmation {
+  company_cnpj: string;
+  environment: 'production';
+  count: number;
+  total_amount: string;
+  documents: Array<{ id: string; version: number; amount: string }>;
 }
 
 export interface CancelPendingOut {

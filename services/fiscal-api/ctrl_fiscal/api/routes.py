@@ -418,7 +418,8 @@ def validate(draft_id: str, request: Request, cc: CompanyCtx = Depends(company_c
     customer = _core_guard(lambda: c.core.customer(cc.company.id, d.customer_id))
     profile = _core_guard(lambda: c.core.service_profile(cc.company.id, d.service_profile_id)
                           if d.service_profile_id else None)
-    issues = drafts_d.validate_draft(d, cc.company, customer, c.clock.now(), profile)
+    issues = drafts_d.validate_draft(d, cc.company, customer, c.clock.now(), profile,
+                                     production_emission_enabled=c.settings.production_emission_enabled)
     drafts_d.record_validation(d, issues, c.clock.now())  # vale só para a versão atual; não autoriza nada
     s.commit()
     return {"valid": not any(i["severity"] == "error" for i in issues), "issues": issues}
@@ -462,7 +463,9 @@ def create_batch(body: sc.BatchCreate, request: Request, cc: CompanyCtx = Depend
             s, company=cc.company, core=c.core, user_id=cc.user_id,
             drafts=[d.model_dump() for d in body.drafts], scheduled_at=body.scheduled_at, timezone_name=body.timezone,
             now=now, max_drafts=c.settings.max_batch_drafts,
-            past_tolerance_seconds=c.settings.schedule_past_tolerance_seconds, trace_id=trace_id_for(request)))
+            past_tolerance_seconds=c.settings.schedule_past_tolerance_seconds, trace_id=trace_id_for(request),
+            production_emission_enabled=c.settings.production_emission_enabled,
+            production_confirmation=body.production_confirmation.model_dump() if body.production_confirmation else None))
         return 202, {"batch_id": b.id, "status": "SCHEDULED", "scheduled_at": b.scheduled_at.astimezone(timezone.utc).isoformat(),
                      "total": b.total}
 

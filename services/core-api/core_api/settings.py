@@ -83,7 +83,7 @@ class CoreSettings:
                                          "service_profiles:prepare", "provider:complete"})
         k = secret("INTERNAL_KEY_FISCAL_WORKER_TO_CORE", required=False)
         if k:
-            clients["fiscal-worker"] = (k, {"companies:read", "customers:read", "authz:job"})
+            clients["fiscal-worker"] = (k, {"companies:read", "customers:read", "authz:job", "service_profiles:read"})
         s = CoreSettings(
             database_url=database_url("CORE"),
             jwt_private_key_pem=secret("JWT_PRIVATE_KEY"),

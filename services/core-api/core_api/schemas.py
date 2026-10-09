@@ -255,6 +255,8 @@ class IntegrationStatus(BaseModel):
     provider: Literal["mock", "official"]
     certificate: IntegrationCertificate
     capabilities: dict[str, bool]
+    # Chaves de configuração da instalação (funcionalidade habilitada), independentes da prontidão da empresa.
+    policy: dict[str, bool] | None = None
     blockers: list[dict[str, str]]
     checked_at: datetime
 

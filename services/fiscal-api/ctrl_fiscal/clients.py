@@ -88,9 +88,14 @@ class CoreClient:
 
     def job_permissions(self, user_id: str, company_id: str) -> list[str] | None:
         """Permissões ATUAIS de quem pediu o job; None = sem acesso (inativo/sem vínculo). Erro = indisponível."""
+        authz = self.job_authorization(user_id, company_id)
+        return None if authz is None else list(authz.get("permissions") or [])
+
+    def job_authorization(self, user_id: str, company_id: str) -> dict | None:
+        """Autorização ATUAL completa (permissões, situação do workspace e ambiente de emissão vigente)."""
         r = self._get("/internal/v1/authz/job", {"user_id": user_id, "company_id": company_id})
         if r.status_code == 200:
-            return list(r.json().get("permissions") or [])
+            return r.json()
         if r.status_code in (403, 404):
             return None
         raise UpstreamError("CORE_UNAVAILABLE", r.status_code)

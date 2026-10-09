@@ -648,10 +648,28 @@ class BatchDraftRef(Strict):
     expected_version: int = Field(ge=1)
 
 
+class ConfirmedDocument(Strict):
+    id: str = UUIDStr
+    version: int = Field(ge=1, description="Versão REVISADA do rascunho.")
+    amount: str = Field(pattern=r"^\d{1,13}\.\d{2}$", description="Valor do serviço revisado.")
+
+
+class ProductionConfirmation(Strict):
+    """Confirmação individual do lote em PRODUÇÃO, conferida no servidor contra o lote real (versões e valores)."""
+
+    company_cnpj: str = Field(pattern=r"^[0-9A-Z]{12}[0-9]{2}$")
+    environment: Literal["production"]
+    documents: list[ConfirmedDocument] = Field(min_length=1, max_length=500)
+    count: int = Field(ge=1, le=500, description="Quantidade de notas do lote.")
+    total_amount: str = Field(pattern=r"^\d{1,13}\.\d{2}$", description="Soma dos valores dos serviços (vServ).")
+
+
 class BatchCreate(Strict):
     drafts: list[BatchDraftRef] = Field(min_length=1, max_length=500)
     scheduled_at: AwareDatetime = Field(description="Instante com offset, ex.: 2026-11-01T00:01:00-03:00.")
     timezone: str = Field(min_length=3, max_length=64, description="Fuso IANA da empresa.")
+    production_confirmation: ProductionConfirmation | None = Field(
+        None, description="Obrigatória em produção: empresa, ambiente, documentos (versão e valor), quantidade e total.")
 
 
 class BatchCreated(BaseModel):

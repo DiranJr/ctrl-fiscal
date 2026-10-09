@@ -214,6 +214,7 @@ def readiness(company_id: str, request: Request, acc: CompanyAccess = Depends(co
         enabled_read = env in (c.adn_environments or [])
         cert = (st or {}).get("certificate") or {}
         caps = (st or {}).get("capabilities") or {}
+        policy = (st or {}).get("policy") or {}
         blockers = [_issue(b["code"], b["message"]) for b in (st or {}).get("blockers", [])]
         if st is None:
             blockers = [_issue("INTEGRATION_UNAVAILABLE", "Conector NFS-e indisponível para conferir.")]
@@ -223,20 +224,23 @@ def readiness(company_id: str, request: Request, acc: CompanyAccess = Depends(co
             consulta += [b for b in blockers if b["code"] not in ("PRODUCTION_EMISSION_BLOCKED",
                                                                    "PRODUCTION_CANCELLATION_BLOCKED")] or \
                 [_issue("DISTRIBUTION_NOT_READY", "Leitura ADN indisponível.")]
-        ops.append({"operation": "consulta", "ready": not consulta, "issues": consulta})
+        # enabled = funcionalidade habilitada na instalação; ready = ESTA empresa pronta para a operação.
+        ops.append({"operation": "consulta", "enabled": bool(policy.get("distribution")), "ready": not consulta,
+                    "issues": consulta})
         base = ([ws_issue] if ws_issue else []) + cadastro
         emissao = list(base) + servicos
         if env != c.nfse_environment:
             emissao.append(_issue("NOT_EMISSION_ENVIRONMENT", "Este não é o ambiente de emissão do workspace."))
         if not caps.get("emission"):
             emissao += [b for b in blockers if b not in emissao] or [_issue("EMISSION_NOT_READY", "Emissão indisponível.")]
-        ops.append({"operation": "emissao", "ready": not [i for i in emissao if i["severity"] == "error"],
-                    "issues": emissao})
+        ops.append({"operation": "emissao", "enabled": bool(policy.get("emission")),
+                    "ready": not [i for i in emissao if i["severity"] == "error"], "issues": emissao})
         canc = ([ws_issue] if ws_issue else [])
         if not caps.get("cancellation"):
             canc += [b for b in blockers if b["code"] != "PRODUCTION_EMISSION_BLOCKED"] or \
                 [_issue("CANCELLATION_NOT_READY", "Cancelamento indisponível.")]
-        ops.append({"operation": "cancelamento", "ready": not canc, "issues": canc})
+        ops.append({"operation": "cancelamento", "enabled": bool(policy.get("cancellation")), "ready": not canc,
+                    "issues": canc})
         envs.append({"environment": env, "certificate": {k: cert.get(k) for k in
                                                          ("present", "subject_cnpj_matches", "not_after", "days_to_expiry")},
                      "operations": ops})
@@ -283,8 +287,13 @@ def _secoes(c: Company, cadastro: list[dict], envs: list[dict], perfis: list[dic
         nome = "Produção" if e["environment"] == "production" else "Produção Restrita"
         for op in e["operations"]:
             label = {"consulta": "consulta", "emissao": "emissão", "cancelamento": "cancelamento"}[op["operation"]]
+            # Funcionalidade habilitada (configuração da instalação) ≠ empresa pronta (cadastro, perfil, certificado…).
             if op["ready"]:
-                amb.append(_issue("ENV_READY", f"{nome}: {label} habilitada.", info))
+                amb.append(_issue("ENV_READY", f"{nome}: {label} habilitada na instalação e empresa pronta.", info))
+            elif op.get("enabled"):
+                amb.append(_issue("ENV_ENABLED_COMPANY_NOT_READY",
+                                  f"{nome}: {label} habilitada na instalação, mas a empresa ainda não está pronta "
+                                  "(veja as pendências das outras seções).", info))
             for i in op["issues"]:
                 if i["code"] in codigos_amb:
                     amb.append(_issue(i["code"], f"{nome} — {label}: {i['message']}", i["severity"]))

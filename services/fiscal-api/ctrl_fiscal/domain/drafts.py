@@ -367,9 +367,15 @@ def profile_issues(d: Draft, profile: dict | None) -> list[dict]:
 
 
 def validate_draft(d: Draft, company: CompanyInfo, customer: dict | None, now: datetime,
-                   profile: dict | None = None) -> list[dict]:
+                   profile: dict | None = None, *, production_emission_enabled: bool = False) -> list[dict]:
     """Validações locais e de formato do leiaute verificado. Não autoriza nem transmite."""
     issues: list[dict] = profile_issues(d, profile)
+    if company.environment == "production":
+        # Produção: o perfil aprovado precisa corresponder EXATAMENTE ao rascunho e à versão revisada.
+        for i in issues:
+            if i["code"] in ("SERVICE_PROFILE_DIVERGENT", "SERVICE_PROFILE_CHANGED"):
+                i["severity"] = "error"
+                i["message"] += " Em produção isto bloqueia o agendamento."
     if customer is None:
         issues.append(_issue("customer_id", "CUSTOMER_NOT_FOUND", "Cliente não encontrado."))
     else:
@@ -416,7 +422,7 @@ def validate_draft(d: Draft, company: CompanyInfo, customer: dict | None, now: d
     if company.environment == "mock":
         issues.append(_issue("environment", "SIMULATION_ONLY", "Ambiente de simulação: nenhuma NFS-e real será gerada.", "info"))
     else:
-        issues.extend(_official_issues(d, company))
+        issues.extend(_official_issues(d, company, production_emission_enabled))
         issues.extend(negocio_issues(d, company, customer, now))
     return issues
 
@@ -464,13 +470,19 @@ def withdraw_draft(s: Session, d: Draft, *, expected_version: int, user_id: str,
     return d
 
 
-def _official_issues(d: Draft, company: CompanyInfo) -> list[dict]:
+def _official_issues(d: Draft, company: CompanyInfo, production_emission_enabled: bool = False) -> list[dict]:
     """Campos obrigatórios da DPS v1.01 (sem valores presumidos)."""
     out: list[dict] = []
-    if company.environment == "production":
+    if company.environment == "production" and not production_emission_enabled:
         out.append(_issue("environment", "PRODUCTION_EMISSION_BLOCKED",
-                          "Transmissão em produção bloqueada (prontidão de IBS/CBS e demais requisitos pendentes); o rascunho "
-                          "pode ser preparado e editado.", "error"))
+                          "Emissão em produção desligada na configuração desta instalação "
+                          "(NFSE_PRODUCTION_EMISSION_ENABLED); o rascunho pode ser preparado e editado.", "error"))
+    elif company.environment == "production":
+        out.append(_issue("environment", "PRODUCTION_REAL", "Produção: a NFS-e emitida terá validade fiscal.", "info"))
+        if not d.service_profile_id:
+            out.append(_issue("service_profile_id", "SERVICE_PROFILE_REQUIRED_PRODUCTION",
+                              "Em produção, aplique um perfil de serviço APROVADO (Configurações → Perfis de serviço) "
+                              "antes de agendar."))
     else:
         out.append(_issue("environment", "HOMOLOGATION", "Produção Restrita: NFS-e sem validade fiscal.", "info"))
     if not d.service_date:

@@ -56,20 +56,54 @@ class LeasedItem:
 
 
 # Autorizador: (item) -> True (pode transmitir) | False (revogado) | None (indisponível: adiar sem transmitir)
-Authorizer = Callable[[LeasedItem], "bool | None"]
+# | dict {"state": "BLOCKED"|"AUTH_REVOKED", "error": {...}} (contexto mudou: nada transmitido, motivo específico).
+Authorizer = Callable[[LeasedItem], "bool | None | dict"]
 EMIT_PERMISSION = "emit"
 
 
-def core_authorizer(core) -> Authorizer:  # noqa: ANN001
-    def check(it: LeasedItem) -> bool | None:
+def core_authorizer(core, sessions: sessionmaker | None = None) -> Authorizer:  # noqa: ANN001
+    def check(it: LeasedItem) -> bool | None | dict:
         if not it.requested_by:
             return False
         try:
-            perms = core.job_permissions(it.requested_by, it.company_id)
+            authz = core.job_authorization(it.requested_by, it.company_id)
         except UpstreamError:
             return None
-        return perms is not None and EMIT_PERMISSION in perms
+        if authz is None or EMIT_PERMISSION not in (authz.get("permissions") or []):
+            return False
+        if it.environment == "production":
+            return _contexto_producao(core, sessions, it, authz)
+        return True
     return check
+
+
+def _contexto_producao(core, sessions: sessionmaker | None, it: LeasedItem, authz: dict) -> bool | None | dict:  # noqa: ANN001
+    """Produção, imediatamente antes de transmitir: o contexto confirmado no agendamento ainda vale? Workspace ativo,
+    mesmo ambiente de emissão e o MESMO perfil de serviço aprovado (mesma versão) aplicado ao rascunho agendado."""
+    def retirar(code: str, msg: str) -> dict:
+        return {"state": "AUTH_REVOKED", "error": {"code": code, "message": msg + " Nada foi transmitido; revise e "
+                                                                               "confirme novamente."}}
+    if authz.get("workspace_status") != "ACTIVE":
+        return {"state": "BLOCKED", "error": {"code": "WORKSPACE_NOT_ACTIVE", "message": (
+            f"Workspace em {authz.get('workspace_status') or 'estado desconhecido'}: transmissão suspensa, nada "
+            "transmitido. Nova tentativa em 1 hora.")}}
+    if authz.get("environment") != it.environment:
+        return retirar("ENVIRONMENT_CHANGED", "O ambiente de emissão da empresa mudou depois do agendamento.")
+    if sessions is None:
+        return None
+    with sessions() as s:
+        d = s.get(Draft, it.draft_id)
+        pid, pver = (d.service_profile_id, d.service_profile_version) if d is not None else (None, None)
+    if not pid:
+        return retirar("SERVICE_PROFILE_REQUIRED_PRODUCTION", "Rascunho sem perfil de serviço aprovado.")
+    try:
+        profile = core.service_profile(it.company_id, pid)
+    except UpstreamError:
+        return None
+    if profile is None or profile.get("status") != "APPROVED" or profile.get("version") != pver:
+        return retirar("SERVICE_PROFILE_CHANGED",
+                       "O perfil de serviço deixou de estar aprovado ou mudou depois da confirmação.")
+    return True
 
 
 def build_dps_id(municipality: str, cnpj: str, series: str, number: int) -> str:
@@ -202,6 +236,10 @@ def process_item(
             resp = nfse.get_submission(it.submission_id, reconcile=True)
         if resp is None or resp.get("state") in ("RECEIVED", "BLOCKED", "NOT_FOUND"):
             allowed = authorize(it) if authorize is not None else True
+            if isinstance(allowed, dict):
+                if it.submit_phase == "SUBMITTING" and allowed["state"] == "BLOCKED":
+                    allowed = {**allowed, "state": "DEFER"}  # envio anterior possível: mantém a reconciliação
+                return _finish(sessions, clock, owner, it, allowed)
             if allowed is not True:
                 if allowed is None:
                     return _finish(sessions, clock, owner, it, {"state": "DEFER", "error": {
@@ -287,7 +325,8 @@ def _finish(sessions: sessionmaker, clock: Clock, owner: str, it: LeasedItem, re
                 draft.version += 1
                 draft.current_item_id = None
             audit(s, now, "emission.withdrawn_authorization_revoked", company_id=item.company_id, actor_type="worker",
-                  actor_id=owner, target_type="batch_item", target_id=item.id, details={"requested_by": it.requested_by})
+                  actor_id=owner, target_type="batch_item", target_id=item.id,
+                  details={"requested_by": it.requested_by, "code": err["code"]})
             final = "WITHDRAWN"
         elif state in ("BLOCKED", "NOT_CONFIGURED"):
             # O conector garante que BLOCKED/NOT_CONFIGURED nunca foi transmitido.

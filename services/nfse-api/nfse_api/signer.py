@@ -24,10 +24,12 @@ RSA_SHA1 = DS + "rsa-sha1"
 SHA1 = DS + "sha1"
 ENVELOPED = DS + "enveloped-signature"
 # 1.00: perfil fixado no XSD 1.00. 1.01: o XSD usa xmldsig genérico; o perfil foi confirmado empiricamente em
-# documentos ACEITOS pela Sefin: DPS assinadas da Produção Restrita (3 de 2026) e pedidos de evento enviados por API
-# por outros emitentes em produção (21 pedRegEvento aceitos, 7 deles v1.01 em 2026), todos com c14n 20010315,
-# rsa-sha1/sha1, transforms enveloped+c14n, Reference URI="#Id" e Signature sem prefixo. (As notas da própria empresa
-# foram emitidas pelo Emissor Web e não trazem assinatura na DPS.)
+# documentos de TERCEIROS aceitos pela Sefin e recebidos pela empresa via ADN: DPS assinadas de outros emitentes na
+# Produção Restrita (3 de 2026, enviadas por API) e pedidos de evento enviados por API por outros emitentes em produção
+# (21 pedRegEvento aceitos, 7 deles v1.01 em 2026), todos com c14n 20010315, rsa-sha1/sha1, transforms
+# enveloped+c14n, Reference URI="#Id" e Signature sem prefixo. A PLATAFORMA AINDA NÃO TRANSMITIU nenhuma DPS nem
+# evento a um ambiente oficial (só leituras ADN e consultas de parametrização); a assinatura com o certificado real
+# foi validada localmente, sem transmissão. As notas da própria empresa foram emitidas pelo Emissor Web.
 CONFIRMED_VERSIONS = ("1.00", "1.01")
 
 

@@ -160,14 +160,21 @@ class OfficialProvider:
         problems: list[dict[str, str]] = []
         if self.environment == "production" and operation in ("event", "event_query"):
             # Política de CANCELAMENTO em produção separada da de emissão (NFSE_PRODUCTION_CANCELLATION_ENABLED).
-            # Habilitada por autorização do titular em 09/10/2026; a emissão em produção continua bloqueada.
+            # Habilitada por autorização do titular em 09/10/2026; a emissão tem chave própria (abaixo).
             if not self.settings.production_cancellation_enabled:
                 problems.append({"code": "PRODUCTION_CANCELLATION_BLOCKED",
                                  "message": "Produção: cancelamento pela plataforma desabilitado na configuração."})
         elif self.environment == "production":
-            if operation not in READ_ONLY_PRODUCTION_OPERATIONS:
-                problems.append({"code": "PRODUCTION_EMISSION_BLOCKED",
-                                 "message": "Produção: emissão/consulta de DPS bloqueadas nesta etapa (somente leitura ADN)."})
+            if operation in ("submit", "query"):
+                # Emissão em produção (envio e a consulta da DPS usada na reconciliação): política própria,
+                # independente do cancelamento e da Produção Restrita (NFSE_PRODUCTION_EMISSION_ENABLED).
+                if not self.settings.production_emission_enabled:
+                    problems.append({"code": "PRODUCTION_EMISSION_BLOCKED",
+                                     "message": "Produção: emissão de NFS-e desligada na configuração "
+                                                "(NFSE_PRODUCTION_EMISSION_ENABLED)."})
+            elif operation not in READ_ONLY_PRODUCTION_OPERATIONS:
+                problems.append({"code": "PRODUCTION_OPERATION_BLOCKED",
+                                 "message": "Produção: operação não permitida pela plataforma."})
             elif not self.settings.production_distribution_enabled:
                 problems.append({"code": "PRODUCTION_DISTRIBUTION_DISABLED",
                                  "message": "Leitura ADN de produção desabilitada na configuração."})
@@ -187,6 +194,15 @@ class OfficialProvider:
             problems.append({"code": "OFFICIAL_CONTRACT_UNCONFIRMED", "message": "Contrato oficial não confirmado."})
         # READY só com cadeia ICP-Brasil válida, revogação confirmada, validade, usos e CNPJ — nenhum aviso é ignorado.
         return ("BLOCKED" if problems else "READY"), problems
+
+    def policy(self) -> dict[str, bool]:
+        """Funcionalidade HABILITADA pela configuração da instalação (não diz se a empresa está pronta)."""
+        if self.environment == "production":
+            return {"emission": self.settings.production_emission_enabled,
+                    "cancellation": self.settings.production_cancellation_enabled,
+                    "distribution": self.settings.production_distribution_enabled}
+        on = bool(self.settings.restricted_enabled)
+        return {"emission": on, "cancellation": on, "distribution": on}
 
     def _fresh_checks(self, cert: Certificate) -> dict:
         """Reconfirma a LCR quando a última verificação passou de 24 h e persiste o resultado."""

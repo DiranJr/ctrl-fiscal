@@ -20,9 +20,16 @@ TERMINAL = ("AUTHORIZED", "REJECTED", "WITHDRAWN")
 def create_batch(
     s: Session, *, company: CompanyInfo, core: CoreClient, user_id: str, drafts: list[dict], scheduled_at: datetime,
     timezone_name: str, now: datetime, max_drafts: int, past_tolerance_seconds: int, trace_id: str | None,
+    production_emission_enabled: bool = False, production_confirmation: dict | None = None,
 ) -> Batch:
-    if company.environment == "production":
-        raise DomainError(422, "PRODUCTION_EMISSION_BLOCKED", "Emissão em produção bloqueada nesta etapa.")
+    if company.environment == "production" and not production_emission_enabled:
+        raise DomainError(422, "PRODUCTION_EMISSION_BLOCKED",
+                          "Emissão em produção desligada na configuração desta instalação "
+                          "(NFSE_PRODUCTION_EMISSION_ENABLED).")
+    if company.environment == "production" and not production_confirmation:
+        raise DomainError(422, "PRODUCTION_CONFIRMATION_REQUIRED",
+                          "Emissão em produção exige a confirmação individual do lote revisado: empresa, ambiente, "
+                          "documentos (versão e valor), quantidade e valor total.")
     if company.workspace_status != "ACTIVE":
         raise DomainError(422, "WORKSPACE_NOT_ACTIVE",
                           f"Workspace em {company.workspace_status or 'situação desconhecida'}: transmissões bloqueadas "
@@ -78,7 +85,8 @@ def create_batch(
         d = found[did]
         customer = core.customer(company.id, d.customer_id)
         profile = core.service_profile(company.id, d.service_profile_id) if d.service_profile_id else None
-        issues = validate_draft(d, company, customer, now, profile)
+        issues = validate_draft(d, company, customer, now, profile,
+                                production_emission_enabled=production_emission_enabled)
         d.issues = issues
         bad = [i for i in issues if i["severity"] == "error"]
         if bad:
@@ -87,6 +95,8 @@ def create_batch(
             snapshots[did] = (customer, issues)
     if errors:
         raise DomainError(422, "DRAFT_INVALID", "Rascunhos com pendências de validação.", errors)
+    if company.environment == "production":
+        _conferir_confirmacao(company, [found[i] for i in ids], production_confirmation or {})
 
     batch = Batch(
         company_id=company.id, environment=company.environment, scheduled_at=scheduled_at, timezone=timezone_name,
@@ -116,9 +126,34 @@ def create_batch(
     audit(s, now, "batch.created", company_id=company.id, actor_id=user_id, target_type="batch", target_id=batch.id,
           details={"total": len(ids), "scheduled_at_utc": scheduled_at.astimezone(timezone.utc).isoformat(),
                    "scheduled_at_received": scheduled_at.isoformat(), "timezone_validated": timezone_name,
-                   "scheduled_local": batch.scheduled_local, "environment": company.environment},
+                   "scheduled_local": batch.scheduled_local, "environment": company.environment,
+                   "production_confirmation": production_confirmation if company.environment == "production" else None},
           trace_id=trace_id)
     return batch
+
+
+def _conferir_confirmacao(company: CompanyInfo, drafts: list[Draft], conf: dict) -> None:
+    """Produção: o que a pessoa confirmou tem de ser EXATAMENTE o lote agendado — mesma empresa e ambiente, os mesmos
+    documentos nas MESMAS versões revisadas, com os mesmos valores, quantidade e total. Qualquer edição posterior
+    muda a versão e exige nova revisão e confirmação."""
+    from decimal import Decimal
+
+    total = sum((d.amount for d in drafts), Decimal("0")).quantize(Decimal("0.01"))
+    docs = {(d.id, d.version, f"{d.amount.quantize(Decimal('0.01'))}") for d in drafts}
+    conf_docs = {(x.get("id"), x.get("version"), x.get("amount")) for x in (conf.get("documents") or [])}
+    diverge = [campo for campo, ok in (
+        ("company_cnpj", conf.get("company_cnpj") == company.cnpj),
+        ("environment", conf.get("environment") == "production"),
+        ("count", conf.get("count") == len(drafts)),
+        ("total_amount", conf.get("total_amount") == f"{total}"),
+        ("documents", conf_docs == docs),
+    ) if not ok]
+    if diverge:
+        raise DomainError(409, "PRODUCTION_CONFIRMATION_MISMATCH",
+                          "A confirmação não corresponde ao lote revisado (empresa, ambiente, documentos/versões, "
+                          "quantidade ou valor total). Revise e confirme novamente.",
+                          [{"field": f"production_confirmation.{k}", "code": "MISMATCH", "message": "Divergente."}
+                           for k in diverge])
 
 
 def _snapshot(d: Draft, company: CompanyInfo, customer: dict) -> dict:

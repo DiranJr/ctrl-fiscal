@@ -45,7 +45,7 @@ class Worker:
         self._last_purge: datetime | None = None
         self.after_external = None  # gancho de teste para simular queda
         # Sem core configurado (somente testes unitários antigos) não há como conferir: bloqueia por segurança.
-        self.authorize = emission.core_authorizer(core) if core is not None else (lambda it: None)
+        self.authorize = emission.core_authorizer(core, sessions) if core is not None else (lambda it: None)
         self.authorize_cancel = cancelamento_worker.core_authorizer(core) if core is not None else (lambda it: None)
 
     # -------------------------------------------------- emissão

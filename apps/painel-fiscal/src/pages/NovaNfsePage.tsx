@@ -5,6 +5,7 @@ import { ObraFields, ObraState, EMPTY_OBRA, obraFromService, obraToService, vali
 import { InfoComplFields, InfoComplState, EMPTY_INFO_COMPL, infoComplFromService, infoComplToPayload, validateInfoCompl } from '../components/InfoComplFields.js';
 import { ServiceProfilePicker } from '../components/ServiceProfilePicker.js';
 import { RevisaoNfse, ConfirmacaoRevisao } from '../components/RevisaoNfse.js';
+import { ConfirmacaoProducao, montarConfirmacaoProducao } from '../components/ConfirmacaoProducao.js';
 import { ScreenSection } from '../components/screen/ScreenSection.js';
 import { useFiscal, logSafe } from '../context/FiscalContext.js';
 import {
@@ -81,6 +82,7 @@ export const NovaNfsePage: React.FC<{ onNavigate: (route: string) => void }> = (
   // Wizard Steps: 1: Preencher, 2: Revisar
   const [step, setStep] = useState<1 | 2>(1);
   const [reviewConfirmed, setReviewConfirmed] = useState(false);
+  const [prodConfirmed, setProdConfirmed] = useState(false);
 
   // Clientes
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -537,6 +539,7 @@ export const NovaNfsePage: React.FC<{ onNavigate: (route: string) => void }> = (
     setFieldErrors({});
     setApiErrorsSummary([]);
     setReviewConfirmed(false);
+    setProdConfirmed(false);
     setStep(2);
   };
 
@@ -613,7 +616,8 @@ export const NovaNfsePage: React.FC<{ onNavigate: (route: string) => void }> = (
 
   // Agendar para o dia 01 às 00:01 do próximo mês (exige a confirmação da revisão)
   const handleScheduleForNextMonth = async () => {
-    if (!currentCompany || !reviewConfirmed) return;
+    const isProd = currentCompany?.environment === 'production';
+    if (!currentCompany || !reviewConfirmed || (isProd && !prodConfirmed)) return;
     const companyId = currentCompany.id;
     const timezone = currentCompany.timezone;
 
@@ -635,6 +639,14 @@ export const NovaNfsePage: React.FC<{ onNavigate: (route: string) => void }> = (
           drafts: [{ id: targetDraft.id, expected_version: targetDraft.version }],
           scheduled_at: scheduleTarget.utcIsoString,
           timezone,
+          // Produção: confirmação vinculada à versão que acabou de ser gravada com o valor EXIBIDO na revisão; se o
+          // servidor tiver gravado outro valor, recusa (PRODUCTION_CONFIRMATION_MISMATCH).
+          ...(isProd ? {
+            production_confirmation: montarConfirmacaoProducao(currentCompany.cnpj, [{
+              id: targetDraft.id, version: targetDraft.version,
+              amount: parseCurrencyPtBrToDecimal(amountInput), descricao: 'NFS-e',
+            }]),
+          } : {}),
         },
         idempotencyKey
       );
@@ -708,9 +720,19 @@ export const NovaNfsePage: React.FC<{ onNavigate: (route: string) => void }> = (
           <div style={{ fontSize: '0.8125rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
             <div>
               Status de Conectividade: <strong>{integrationStatus.status}</strong> • Emissão:{' '}
-              <strong>{integrationStatus.capabilities?.emission ? 'Habilitada' : 'Bloqueada'}</strong> • Distribuição:{' '}
-              <strong>{integrationStatus.capabilities?.distribution ? 'Habilitada' : 'Bloqueada'}</strong>
+              <strong>{integrationStatus.capabilities?.emission ? 'Pronta' : 'Bloqueada'}</strong> • Distribuição:{' '}
+              <strong>{integrationStatus.capabilities?.distribution ? 'Pronta' : 'Bloqueada'}</strong>
             </div>
+            {/* Funcionalidade habilitada na instalação ≠ empresa pronta (certificado, cadastro, perfil aprovado). */}
+            {integrationStatus.policy && (
+              <div>
+                Funcionalidade de emissão neste ambiente:{' '}
+                <strong>{integrationStatus.policy.emission ? 'habilitada na instalação' : 'desligada na instalação'}</strong>
+                {integrationStatus.policy.emission && !integrationStatus.capabilities?.emission && ' — a empresa ainda tem pendências (veja abaixo).'}
+                {integrationStatus.policy.emission && integrationStatus.capabilities?.emission && currentCompany?.environment === 'production'
+                  && ' — cada nota ainda exige perfil de serviço aprovado e sua confirmação individual.'}
+              </div>
+            )}
             {integrationStatus.blockers && integrationStatus.blockers.length > 0 && (
               <div style={{ marginTop: '0.25rem' }}>
                 <strong>Bloqueios e Capacidades Reais ({integrationStatus.blockers.length}):</strong>
@@ -1178,6 +1200,13 @@ export const NovaNfsePage: React.FC<{ onNavigate: (route: string) => void }> = (
           </Alert>
 
           <ConfirmacaoRevisao checked={reviewConfirmed} onChange={setReviewConfirmed} />
+          {currentCompany?.environment === 'production' && (
+            <ConfirmacaoProducao empresa={{ name: currentCompany.name, cnpj: currentCompany.cnpj }}
+              docs={[{ id: activeDraft?.id || 'nova', version: activeDraft?.version || 1,
+                       amount: parseCurrencyPtBrToDecimal(amountInput) || '0.00',
+                       descricao: selectedCustomer?.name || 'Tomador' }]}
+              checked={prodConfirmed} onChange={setProdConfirmed} versaoAoGravar />
+          )}
 
           <div className="pf-actions-row">
             <Button variant="outline" onClick={() => setStep(1)}>
@@ -1187,8 +1216,11 @@ export const NovaNfsePage: React.FC<{ onNavigate: (route: string) => void }> = (
               <Button variant="secondary" isLoading={isSubmitting} onClick={handleSaveDraft}>
                 Salvar como Rascunho
               </Button>
-              <Button variant="primary" isLoading={isSubmitting} disabled={!reviewConfirmed} onClick={handleScheduleForNextMonth}
-                title={reviewConfirmed ? undefined : 'Marque “Conferi os dados acima” para agendar'}>
+              <Button variant="primary" isLoading={isSubmitting}
+                disabled={!reviewConfirmed || (currentCompany?.environment === 'production' && !prodConfirmed)}
+                onClick={handleScheduleForNextMonth}
+                title={!reviewConfirmed ? 'Marque “Conferi os dados acima” para agendar'
+                  : currentCompany?.environment === 'production' && !prodConfirmed ? 'Confirme a emissão em produção' : undefined}>
                 Agendar Lote (01 às 00:01)
               </Button>
             </div>

@@ -87,8 +87,14 @@ export const WorkspaceReadiness: React.FC = () => {
                   <div key={op.operation} className="pf-ready-op" data-ready={op.ready ? 'true' : undefined}>
                     <div className="pf-ready-op-head">
                       <span>{OP_LABEL[op.operation] || op.operation}</span>
-                      <Badge status={op.ready ? 'VALID' : 'DIVERGENT'} customLabel={op.ready ? 'Pronta' : 'Pendente'} size="sm" />
+                      <Badge status={op.ready ? 'VALID' : 'DIVERGENT'} customLabel={op.ready ? 'Empresa pronta' : 'Empresa com pendências'} size="sm" />
                     </div>
+                    {/* Funcionalidade habilitada na instalação ≠ empresa pronta para usá-la. */}
+                    {op.enabled !== undefined && (
+                      <span className="pf-help">
+                        Funcionalidade: {op.enabled ? 'habilitada na instalação' : 'desligada na instalação'}
+                      </span>
+                    )}
                     {op.issues.length > 0 ? (
                       <ul className="pf-ready-issues">
                         {op.issues.map((i, k) => (

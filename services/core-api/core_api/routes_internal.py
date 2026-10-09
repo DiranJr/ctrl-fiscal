@@ -86,7 +86,12 @@ def authz_job(
     company = s.get(Company, company_id) if m else None
     if m is None or company is None or not company.is_active:
         raise ProblemError(403, "COMPANY_FORBIDDEN", "Usuário sem acesso a esta empresa.")
-    return {"user_id": user.id, "company_id": company.id, "permissions": list(m.permissions or [])}
+    from .routes_workspaces import workspace_of
+
+    w = workspace_of(s, company.id)
+    # Contexto vigente conferido antes de transmitir em produção: workspace ativo e ambiente de emissão atual.
+    return {"user_id": user.id, "company_id": company.id, "permissions": list(m.permissions or []),
+            "workspace_status": w.status if w else None, "environment": company.nfse_environment}
 
 
 @router.get("/companies")

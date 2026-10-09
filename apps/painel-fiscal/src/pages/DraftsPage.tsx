@@ -5,6 +5,7 @@ import { ObraFields, ObraState, EMPTY_OBRA, obraFromService, obraToService, vali
 import { InfoComplFields, InfoComplState, EMPTY_INFO_COMPL, infoComplFromService, infoComplToPayload, validateInfoCompl } from '../components/InfoComplFields.js';
 import { ServiceProfilePicker } from '../components/ServiceProfilePicker.js';
 import { RevisaoNfse, ConfirmacaoRevisao } from '../components/RevisaoNfse.js';
+import { ConfirmacaoProducao, montarConfirmacaoProducao } from '../components/ConfirmacaoProducao.js';
 import { useFiscal, logSafe } from '../context/FiscalContext.js';
 import { useUnsavedChanges } from '@ctrl-fiscal/ui';
 import {
@@ -182,6 +183,8 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
   const [scheduleDateTime, setScheduleDateTime] = useState('');
   const [isSchedulingBatch, setIsSchedulingBatch] = useState(false);
   const [batchReviewConfirmed, setBatchReviewConfirmed] = useState(false);
+  const [prodConfirmed, setProdConfirmed] = useState(false);
+  const isProd = currentCompany?.environment === 'production';
 
   const loadDrafts = useCallback(async () => {
     if (!currentCompany) return;
@@ -607,7 +610,7 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
 
   // Confirmar Agendamento de Lote
   const handleConfirmBatchScheduling = async () => {
-    if (!currentCompany || selectedDraftIds.size === 0 || !batchReviewConfirmed) return;
+    if (!currentCompany || selectedDraftIds.size === 0 || !batchReviewConfirmed || (isProd && !prodConfirmed)) return;
     const companyId = currentCompany.id;
     const timezone = currentCompany.timezone;
     if (!scheduleDateTime) {
@@ -632,6 +635,11 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
           drafts: draftsPayload,
           scheduled_at: scheduledAtIso,
           timezone,
+          ...(isProd ? {
+            production_confirmation: montarConfirmacaoProducao(currentCompany.cnpj, selectedDraftsList.map((d) => ({
+              id: d.id, version: d.version, amount: d.amount, descricao: d.customer?.name || d.customer_name || 'Tomador',
+            }))),
+          } : {}),
         },
         idempotencyKey
       );
@@ -896,6 +904,7 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
                 setScheduleDateTime(target.localInputString);
               }
               setBatchReviewConfirmed(false);
+              setProdConfirmed(false);
               setIsScheduleModalOpen(true);
             }}
           >
@@ -1263,8 +1272,10 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
             <Button variant="outline" onClick={() => setIsScheduleModalOpen(false)}>
               Cancelar
             </Button>
-            <Button variant="primary" isLoading={isSchedulingBatch} disabled={!batchReviewConfirmed} onClick={handleConfirmBatchScheduling}
-              title={batchReviewConfirmed ? undefined : 'Marque “Conferi os dados acima” para agendar'}>
+            <Button variant="primary" isLoading={isSchedulingBatch} disabled={!batchReviewConfirmed || (isProd && !prodConfirmed)}
+              onClick={handleConfirmBatchScheduling}
+              title={!batchReviewConfirmed ? 'Marque “Conferi os dados acima” para agendar'
+                : isProd && !prodConfirmed ? 'Confirme a emissão em produção' : undefined}>
               Confirmar Agendamento do Lote
             </Button>
           </>
@@ -1327,6 +1338,13 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
           </Alert>
 
           <ConfirmacaoRevisao checked={batchReviewConfirmed} onChange={setBatchReviewConfirmed} />
+          {isProd && currentCompany && (
+            <ConfirmacaoProducao empresa={{ name: currentCompany.name, cnpj: currentCompany.cnpj }}
+              docs={drafts.filter((d) => selectedDraftIds.has(d.id)).map((d) => ({
+                id: d.id, version: d.version, amount: d.amount, descricao: d.customer?.name || d.customer_name || 'Tomador',
+              }))}
+              checked={prodConfirmed} onChange={setProdConfirmed} />
+          )}
         </div>
       </Modal>
     </div>

@@ -15,7 +15,7 @@ for sub in ("services/shared", "services/core-api", "services/fiscal-api"):
 from cryptography.hazmat.primitives import serialization  # noqa: E402
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey  # noqa: E402
 
-CONTRACT_VERSION = "0.9.1"
+CONTRACT_VERSION = "0.9.2"
 
 
 def main() -> None:

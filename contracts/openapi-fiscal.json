@@ -3,7 +3,7 @@
   "info": {
     "title": "CTRL Fiscal — Fiscal API",
     "description": "NFS-e: documentos emitidos/recebidos, rascunhos, lotes agendados, importação, exportação e sincronização ADN. Ambiente `mock` é SIMULAÇÃO local, sem validade fiscal.",
-    "version": "0.9.1",
+    "version": "0.9.2",
     "x-contract": "CTRL Fiscal contrato compartilhado v0.9"
   },
   "paths": {
@@ -5933,6 +5933,17 @@
             "minLength": 3,
             "title": "Timezone",
             "description": "Fuso IANA da empresa."
+          },
+          "production_confirmation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProductionConfirmation"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Obrigatória em produção: empresa, ambiente, documentos (versão e valor), quantidade e total."
           }
         },
         "additionalProperties": false,
@@ -7120,6 +7131,35 @@
           "suggest_analysis"
         ],
         "title": "CancellationRequestOut"
+      },
+      "ConfirmedDocument": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F-]{36}$",
+            "title": "Id"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Version",
+            "description": "Versão REVISADA do rascunho."
+          },
+          "amount": {
+            "type": "string",
+            "pattern": "^\\d{1,13}\\.\\d{2}$",
+            "title": "Amount",
+            "description": "Valor do serviço revisado."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "version",
+          "amount"
+        ],
+        "title": "ConfirmedDocument"
       },
       "CustomerSnapshot": {
         "properties": {
@@ -10271,6 +10311,53 @@
           "message"
         ],
         "title": "ProblemFieldError"
+      },
+      "ProductionConfirmation": {
+        "properties": {
+          "company_cnpj": {
+            "type": "string",
+            "pattern": "^[0-9A-Z]{12}[0-9]{2}$",
+            "title": "Company Cnpj"
+          },
+          "environment": {
+            "type": "string",
+            "const": "production",
+            "title": "Environment"
+          },
+          "documents": {
+            "items": {
+              "$ref": "#/components/schemas/ConfirmedDocument"
+            },
+            "type": "array",
+            "maxItems": 500,
+            "minItems": 1,
+            "title": "Documents"
+          },
+          "count": {
+            "type": "integer",
+            "maximum": 500.0,
+            "minimum": 1.0,
+            "title": "Count",
+            "description": "Quantidade de notas do lote."
+          },
+          "total_amount": {
+            "type": "string",
+            "pattern": "^\\d{1,13}\\.\\d{2}$",
+            "title": "Total Amount",
+            "description": "Soma dos valores dos serviços (vServ)."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "company_cnpj",
+          "environment",
+          "documents",
+          "count",
+          "total_amount"
+        ],
+        "title": "ProductionConfirmation",
+        "description": "Confirmação individual do lote em PRODUÇÃO, conferida no servidor contra o lote real (versões e valores)."
       },
       "Progress": {
         "properties": {
