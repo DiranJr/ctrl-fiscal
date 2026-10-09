@@ -1,0 +1,113 @@
+# =============================================================================
+# CTRL Fiscal — o que NUNCA vai para o repositório (público)
+# =============================================================================
+
+# ---- Segredos e configuração local --------------------------------------------
+/secrets/
+/secrets-*/
+secrets*/
+.env
+.env.*
+!.env.example
+# Configuração da VPS gerada a partir de deploy/env.producao.exemplo
+/deploy/.env
+/deploy/env.producao
+/deploy/*.local
+# Certificados, chaves e repositórios de chaves (e-CNPJ A1, JWT, TLS, age/gpg)
+*.pfx
+*.p12
+*.pem
+*.key
+*.jks
+*.crt
+*.cer
+*.der
+*.csr
+*.age
+*.gpg
+*.asc
+age-identidade*.txt
+# Âncoras ICP-Brasil PÚBLICAS, exigidas em runtime (services/nfse-api/nfse_api/icp.py)
+!services/nfse-api/nfse_api/icp_ancoras/*.pem
+
+# ---- Dados reais, backups e dumps ----------------------------------------------
+# ANCORADOS na raiz: services/nfse-api/nfse_api/data/ é código e deve ser versionado.
+/data/
+/backups/
+/backup/
+*.sql
+*.sql.gz
+*.sql.zst
+*.dump
+*.bak
+*.tar
+*.tar.gz
+*.tgz
+# Exportações/pacotes gerados pela aplicação (ZIP/XLSX/PDF de notas reais)
+/exports/
+/exportacoes/
+# Pacotes de imagens gerados por deploy/empacotar-imagens.sh
+/pacotes/
+# XMLs de NFS-e/DPS reais: só são versionados os XSDs oficiais e fixtures dentro de tests/
+*.xml
+!tests/**/*.xml
+!docs/oficial/**/*.xml
+!services/nfse-api/nfse_api/xsd/**/*.xml
+
+# ---- Documentos oficiais sem licença de redistribuição (ver docs/oficial/fontes.json) ----------------------
+# Especificações OpenAPI/Swagger das APIs da Sefin/ADN, obtidas com certificado digital (mTLS), e a extração
+# derivada do Anexo I (licença SemDerivações): ficam só na máquina de quem as obteve.
+/docs/oficial/producao/
+/docs/oficial/producao-restrita/
+/docs/oficial/regras-dps-anexo-i.json
+
+# ---- Evidências geradas (logs/JSON/capturas de execução local) -----------------
+# Podem conter metadados operacionais da instalação real; ficam só na máquina de quem executou.
+/docs/evidencias/*
+!/docs/evidencias/.gitkeep
+
+# ---- Python --------------------------------------------------------------------
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage/
+htmlcov/
+
+# ---- Node/frontend -------------------------------------------------------------
+node_modules/
+dist/
+.next/
+out/
+*.tsbuildinfo
+npm-debug.log*
+
+# ---- Navegador/testes ----------------------------------------------------------
+.chrome-test-profile/
+/test-results/
+/playwright-report/
+
+# ---- Logs, temporários e volumes locais ----------------------------------------
+*.log
+logs/
+*.tmp
+*.orig
+/--help
+/volumes/
+/mysql-data/
+/caddy-data/
+
+# ---- Ferramentas/editores ------------------------------------------------------
+.claude/
+.vscode/
+.idea/
+
+# ---- SO ------------------------------------------------------------------------
+Thumbs.db
+desktop.ini
+.DS_Store

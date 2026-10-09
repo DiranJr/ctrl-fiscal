@@ -1,0 +1,298 @@
+# CTRL Fiscal — Compose raiz (dono: backend/Claude). Somente o gateway publica porta,
+# e apenas em loopback. Segredos ficam em ./secrets (gerados por scripts/gerar-segredos.ps1,
+# fora do git). Nome de projeto distinto do "Projeto Inicial" (ctrl-fiscal) para não
+# reaproveitar seu volume/containers.
+name: ctrlfiscal
+
+x-hardening: &hardening
+  restart: unless-stopped
+  read_only: true
+  tmpfs: [/tmp]
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  logging:
+    driver: json-file
+    options: {max-size: "10m", max-file: "5"}
+
+x-backend-env: &backend-env
+  APP_ENV: ${APP_ENV:-development}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  ENABLE_API_DOCS: ${ENABLE_API_DOCS:-false}
+
+x-migrate: &migrate
+  restart: "no"
+  read_only: true
+  tmpfs: [/tmp]
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  command: ["alembic", "upgrade", "head"]
+  networks: [backend]
+  depends_on:
+    mysql: {condition: service_healthy}
+
+services:
+  mysql:
+    image: mysql:8.4@sha256:6ea90827b1100f8f2ae306a539f86d2c264a26ed435a2a9f75551dd5c3aeb242
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD_FILE: /run/secrets/mysql_root_password
+    secrets: [mysql_root_password, core_db_password, core_migrate_db_password, fiscal_db_password,
+              fiscal_migrate_db_password, nfse_db_password, nfse_migrate_db_password]
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./infra/mysql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$(cat /run/secrets/mysql_root_password)\" --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 20s
+    networks: [backend]
+    deploy: {resources: {limits: {memory: 768m}}}
+
+  # ---------------------------------------------------------------- migrações (credenciais DDL)
+  core-migrate:
+    <<: *migrate
+    image: ctrlfiscal/core-api:${IMAGE_TAG:-dev}
+    build: {context: ./services, dockerfile: core-api/Dockerfile}
+    environment:
+      CORE_DB_HOST: mysql
+      CORE_DB_NAME: ctrl_core
+      CORE_MIGRATE_DB_USER: core_migrate
+      CORE_MIGRATE_DB_PASSWORD_FILE: /run/secrets/core_migrate_db_password
+    secrets: [core_migrate_db_password]
+  fiscal-migrate:
+    <<: *migrate
+    image: ctrlfiscal/fiscal-api:${IMAGE_TAG:-dev}
+    build: {context: ./services, dockerfile: fiscal-api/Dockerfile}
+    environment:
+      FISCAL_DB_HOST: mysql
+      FISCAL_DB_NAME: ctrl_fiscal
+      FISCAL_MIGRATE_DB_USER: fiscal_migrate
+      FISCAL_MIGRATE_DB_PASSWORD_FILE: /run/secrets/fiscal_migrate_db_password
+    secrets: [fiscal_migrate_db_password]
+  nfse-migrate:
+    <<: *migrate
+    image: ctrlfiscal/nfse-api:${IMAGE_TAG:-dev}
+    build: {context: ./services, dockerfile: nfse-api/Dockerfile}
+    environment:
+      NFSE_DB_HOST: mysql
+      NFSE_DB_NAME: ctrl_nfse
+      NFSE_MIGRATE_DB_USER: nfse_migrate
+      NFSE_MIGRATE_DB_PASSWORD_FILE: /run/secrets/nfse_migrate_db_password
+    secrets: [nfse_migrate_db_password]
+
+  # ---------------------------------------------------------------- serviços
+  core-api:
+    <<: *hardening
+    image: ctrlfiscal/core-api:${IMAGE_TAG:-dev}
+    build: {context: ./services, dockerfile: core-api/Dockerfile}
+    environment:
+      <<: *backend-env
+      CORE_DB_HOST: mysql
+      CORE_DB_NAME: ctrl_core
+      CORE_DB_USER: core
+      CORE_DB_PASSWORD_FILE: /run/secrets/core_db_password
+      JWT_PRIVATE_KEY_FILE: /run/secrets/jwt_private_key
+      JWT_PUBLIC_KEY_FILE: /run/secrets/jwt_public_key
+      CSRF_SECRET_FILE: /run/secrets/csrf_secret
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://127.0.0.1:8088,http://localhost:8088}
+      ALLOW_INSECURE_DEV_COOKIE: ${ALLOW_INSECURE_DEV_COOKIE:-false}
+      ACCESS_TOKEN_TTL_SECONDS: ${ACCESS_TOKEN_TTL_SECONDS:-900}
+      REFRESH_TOKEN_TTL_SECONDS: ${REFRESH_TOKEN_TTL_SECONDS:-604800}
+      INTERNAL_KEY_FISCAL_API_TO_CORE_FILE: /run/secrets/internal_fiscal_api_to_core
+      INTERNAL_KEY_FISCAL_WORKER_TO_CORE_FILE: /run/secrets/internal_fiscal_worker_to_core
+      INTERNAL_KEY_CORE_TO_NFSE_FILE: /run/secrets/internal_core_to_nfse
+      NFSE_API_URL: http://nfse-api:8000
+      # X-Real-IP só é aceito de conexões vindas do gateway (limites de tentativa por IP).
+      TRUSTED_PROXY_HOSTS: gateway
+    secrets: [core_db_password, jwt_private_key, jwt_public_key, csrf_secret, internal_fiscal_api_to_core,
+              internal_fiscal_worker_to_core, internal_core_to_nfse]
+    depends_on:
+      core-migrate: {condition: service_completed_successfully}
+    # apigw: rede exclusiva gateway↔APIs (os frontends não alcançam /internal das APIs).
+    networks: [backend, apigw]
+    deploy: {resources: {limits: {memory: 256m}}}
+
+  fiscal-api:
+    <<: *hardening
+    image: ctrlfiscal/fiscal-api:${IMAGE_TAG:-dev}
+    build: {context: ./services, dockerfile: fiscal-api/Dockerfile}
+    environment:
+      <<: *backend-env
+      FISCAL_DB_HOST: mysql
+      FISCAL_DB_NAME: ctrl_fiscal
+      FISCAL_DB_USER: fiscal
+      FISCAL_DB_PASSWORD_FILE: /run/secrets/fiscal_db_password
+      JWT_PUBLIC_KEY_FILE: /run/secrets/jwt_public_key
+      CORE_API_URL: http://core-api:8000
+      INTERNAL_KEY_FISCAL_API_TO_CORE_FILE: /run/secrets/internal_fiscal_api_to_core
+      UPLOAD_MAX_BYTES: ${UPLOAD_MAX_BYTES:-26214400}
+      EXPORT_DIR: /data/exports
+      # Fontes do DANFSe: diretório LOCAL licenciado (arial.ttf, arialbd.ttf, micross.ttf) montado somente leitura.
+      # Vazio = substituta Liberation Sans (desvio declarado no PDF e no cabeçalho X-Danfse-Fontes). Não distribuir fontes na imagem.
+      DANFSE_FONT_DIR: ${DANFSE_FONT_DIR:-}
+      # Cancelamento em produção (eventos 101101/101103): política própria, separada da emissão. Autorizado pelo
+      # titular em 09/10/2026; cada pedido real exige confirmação explícita do usuário com permissão "cancel".
+      NFSE_PRODUCTION_CANCELLATION_ENABLED: ${NFSE_PRODUCTION_CANCELLATION_ENABLED:-false}
+    secrets: [fiscal_db_password, jwt_public_key, internal_fiscal_api_to_core]
+    volumes: [exports:/data/exports]
+    depends_on:
+      fiscal-migrate: {condition: service_completed_successfully}
+      core-api: {condition: service_healthy}
+    networks: [backend, apigw]
+    deploy: {resources: {limits: {memory: 384m}}}
+
+  fiscal-worker:
+    <<: *hardening
+    image: ctrlfiscal/fiscal-worker:${IMAGE_TAG:-dev}
+    build: {context: ./services, dockerfile: fiscal-worker/Dockerfile}
+    environment:
+      <<: *backend-env
+      FISCAL_DB_HOST: mysql
+      FISCAL_DB_NAME: ctrl_fiscal
+      FISCAL_DB_USER: fiscal
+      FISCAL_DB_PASSWORD_FILE: /run/secrets/fiscal_db_password
+      CORE_API_URL: http://core-api:8000
+      NFSE_API_URL: http://nfse-api:8000
+      INTERNAL_KEY_FISCAL_WORKER_TO_CORE_FILE: /run/secrets/internal_fiscal_worker_to_core
+      INTERNAL_KEY_FISCAL_WORKER_TO_NFSE_FILE: /run/secrets/internal_fiscal_worker_to_nfse
+      EXPORT_DIR: /data/exports
+      # Fontes do DANFSe: diretório LOCAL licenciado (arial.ttf, arialbd.ttf, micross.ttf) montado somente leitura.
+      # Vazio = substituta Liberation Sans (desvio declarado no PDF e no cabeçalho X-Danfse-Fontes). Não distribuir fontes na imagem.
+      DANFSE_FONT_DIR: ${DANFSE_FONT_DIR:-}
+      SYNC_INTERVAL_HOURS: "12"
+      EMISSION_MAX_IN_FLIGHT: ${EMISSION_MAX_IN_FLIGHT:-10}
+      DPS_SERIES: ${DPS_SERIES:-1}
+    secrets: [fiscal_db_password, internal_fiscal_worker_to_core, internal_fiscal_worker_to_nfse]
+    volumes: [exports:/data/exports]
+    depends_on:
+      fiscal-migrate: {condition: service_completed_successfully}
+      core-api: {condition: service_healthy}
+      nfse-api: {condition: service_healthy}
+    networks: [backend]
+    deploy: {resources: {limits: {memory: 384m}}}
+
+  nfse-api:
+    <<: *hardening
+    image: ctrlfiscal/nfse-api:${IMAGE_TAG:-dev}
+    build: {context: ./services, dockerfile: nfse-api/Dockerfile}
+    environment:
+      <<: *backend-env
+      NFSE_DB_HOST: mysql
+      NFSE_DB_NAME: ctrl_nfse
+      NFSE_DB_USER: nfse
+      NFSE_DB_PASSWORD_FILE: /run/secrets/nfse_db_password
+      NFSE_VAULT_KEY_FILE: /run/secrets/nfse_vault_key
+      INTERNAL_KEY_FISCAL_WORKER_TO_NFSE_FILE: /run/secrets/internal_fiscal_worker_to_nfse
+      INTERNAL_KEY_CORE_TO_NFSE_FILE: /run/secrets/internal_core_to_nfse
+      NFSE_RESTRICTED_ENABLED: ${NFSE_RESTRICTED_ENABLED:-false}
+      # Produção: apenas leitura ADN (emissão/consulta de DPS bloqueadas em código).
+      NFSE_PRODUCTION_DISTRIBUTION_ENABLED: ${NFSE_PRODUCTION_DISTRIBUTION_ENABLED:-false}
+      # Cancelamento (eventos do emitente) em produção: separado da emissão; ligado só pela variável (padrão false).
+      NFSE_PRODUCTION_CANCELLATION_ENABLED: ${NFSE_PRODUCTION_CANCELLATION_ENABLED:-false}
+      # Mock só em testes automatizados; em execução fica desligado (sem fallback).
+      NFSE_MOCK_ENABLED: ${NFSE_MOCK_ENABLED:-false}
+      NFSE_MOCK_PAGE_SIZE: ${NFSE_MOCK_PAGE_SIZE:-3}
+    secrets: [nfse_db_password, nfse_vault_key, internal_fiscal_worker_to_nfse, internal_core_to_nfse]
+    depends_on:
+      nfse-migrate: {condition: service_completed_successfully}
+    # backend (interno) + egress-oficial: ÚNICO serviço com saída de rede, para as APIs oficiais (allowlist de hosts
+    # no transporte) e LCR da cadeia ICP-Brasil validada. Sem portas publicadas; sem rota pelo gateway.
+    networks: [backend, egress-oficial]
+    deploy: {resources: {limits: {memory: 256m}}}
+
+  # Seed de demonstração REMOVIDO do ambiente operacional (08/10/2026). core_api.seed só roda em ambiente
+  # descartável, com ALLOW_DEMO_SEED=true; nenhuma rotina de startup cria empresas/usuários de demonstração.
+
+  # ---------------------------------------------------------------- frontend (Dockerfiles do Gemini)
+  web:
+    image: ctrlfiscal/web:${IMAGE_TAG:-dev}
+    build: {context: ., dockerfile: apps/web/Dockerfile}
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/tmp]
+    networks: [edge]
+    deploy: {resources: {limits: {memory: 384m}}}
+
+  painel-fiscal:
+    image: ctrlfiscal/painel-fiscal:${IMAGE_TAG:-dev}
+    build: {context: ., dockerfile: apps/painel-fiscal/Dockerfile}
+    restart: unless-stopped
+    # nginx sem privilégios (porta 8080), sistema de arquivos somente leitura
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [edge]
+    deploy: {resources: {limits: {memory: 128m}}}
+
+  gateway:
+    image: nginxinc/nginx-unprivileged:1.28-alpine@sha256:7377697a821c131a924a7105fafbe7414db4e9fcc77a6f08f776f33f141ec3f8
+    restart: unless-stopped
+    ports: ["127.0.0.1:${HTTP_PORT:-8088}:80"]
+    environment:
+      CORE_API_UPSTREAM: core-api:8000
+      FISCAL_API_UPSTREAM: fiscal-api:8000
+      WEB_UPSTREAM: web:3000
+      PAINEL_UPSTREAM: painel-fiscal:8080
+      IMPORT_MAX_BODY: 26m
+      # Proxy HTTPS confiável (só na VPS); 0.0.0.0 = nenhum (instalação local sem proxy na frente).
+      TRUSTED_PROXY_IP: ${TRUSTED_PROXY_IP:-0.0.0.0}
+    volumes:
+      - ./infra/gateway/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+    # Somente leitura: corpos e respostas ficam em memória (tmpfs); nada de PFX/XML/ZIP em camada gravável.
+    read_only: true
+    tmpfs: ["/tmp", "/etc/nginx/conf.d:uid=101,gid=101,mode=0755"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    depends_on:
+      core-api: {condition: service_healthy}
+      fiscal-api: {condition: service_healthy}
+    networks: [edge, apigw]
+    deploy: {resources: {limits: {memory: 128m}}}
+
+networks:
+  backend:
+    internal: true   # MySQL, nfse-api e worker sem acesso de/para fora
+  edge: {}            # gateway e frontends (porta publicada só pelo gateway, em loopback)
+  apigw:
+    internal: true    # gateway ↔ core-api/fiscal-api; frontends fora
+  egress-oficial: {}   # saída de rede só para o nfse-api
+
+volumes:
+  mysql-data:
+  exports:
+
+secrets:
+  mysql_root_password:
+    file: ${SECRETS_DIR:-./secrets}/mysql_root_password.txt
+  core_db_password:
+    file: ${SECRETS_DIR:-./secrets}/core_db_password.txt
+  core_migrate_db_password:
+    file: ${SECRETS_DIR:-./secrets}/core_migrate_db_password.txt
+  fiscal_db_password:
+    file: ${SECRETS_DIR:-./secrets}/fiscal_db_password.txt
+  fiscal_migrate_db_password:
+    file: ${SECRETS_DIR:-./secrets}/fiscal_migrate_db_password.txt
+  nfse_db_password:
+    file: ${SECRETS_DIR:-./secrets}/nfse_db_password.txt
+  nfse_migrate_db_password:
+    file: ${SECRETS_DIR:-./secrets}/nfse_migrate_db_password.txt
+  jwt_private_key:
+    file: ${SECRETS_DIR:-./secrets}/jwt_private_key.pem
+  jwt_public_key:
+    file: ${SECRETS_DIR:-./secrets}/jwt_public_key.pem
+  csrf_secret:
+    file: ${SECRETS_DIR:-./secrets}/csrf_secret.txt
+  internal_fiscal_api_to_core:
+    file: ${SECRETS_DIR:-./secrets}/internal_fiscal_api_to_core.txt
+  internal_fiscal_worker_to_core:
+    file: ${SECRETS_DIR:-./secrets}/internal_fiscal_worker_to_core.txt
+  internal_fiscal_worker_to_nfse:
+    file: ${SECRETS_DIR:-./secrets}/internal_fiscal_worker_to_nfse.txt
+  internal_core_to_nfse:
+    file: ${SECRETS_DIR:-./secrets}/internal_core_to_nfse.txt
+  nfse_vault_key:
+    file: ${SECRETS_DIR:-./secrets}/nfse_vault_key.txt

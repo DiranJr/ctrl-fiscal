@@ -1,0 +1,39 @@
+{
+ "fonte": "https://acraiz.icpbrasil.gov.br/credenciadas/CertificadosAC-ICP-Brasil/ACcompactado.zip",
+ "pacote_sha512": "4585a99955607525e475cf22138302fe8ddce6ca8f0926cd1f01809f007d4bcddff5c1070369d29b1de99c0d2eb058ce0deb856bae0189469ba37e09a59d7985",
+ "gerado_em": "2026-10-08T11:40:40.439829+00:00",
+ "raizes": [
+  {
+   "cn": "Autoridade Certificadora Raiz Brasileira v11",
+   "sha256": "1406710058180fa4081aab3f246f1702429c552a11fa3143b84c88cb3ab8e5e7",
+   "valido_ate": "2032-07-01T12:00:18+00:00"
+  },
+  {
+   "cn": "Autoridade Certificadora Raiz Brasileira v6",
+   "sha256": "3bdb9b509352f1d3d71c2bf64d9a38a4e6cebda27809d77f7ac476cbde6e314a",
+   "valido_ate": "2038-12-28T12:00:03+00:00"
+  },
+  {
+   "cn": "Autoridade Certificadora Raiz Brasileira v7",
+   "sha256": "5657e70580eb678983f3ed7dfce091d84cae6549389a47fccda8d0e4dc2cf576",
+   "valido_ate": "2038-12-28T12:00:35+00:00"
+  },
+  {
+   "cn": "Autoridade Certificadora Raiz Brasileira v10",
+   "sha256": "6e0bff069a26994c15de2c4888cc54af84882e5495b7fbf66be9ccffec7489f6",
+   "valido_ate": "2032-07-01T12:00:59+00:00"
+  },
+  {
+   "cn": "Autoridade Certificadora Raiz Brasileira v5",
+   "sha256": "caa53fc6091c6951887c976e378f6ef89aa6377c55d97b6475422b71ed7e9b17",
+   "valido_ate": "2029-03-02T23:59:38+00:00"
+  },
+  {
+   "cn": "Autoridade Certificadora Raiz Brasileira v12",
+   "sha256": "d8478e37ce19c690cf657381e68fe600e4e1a042536830f06847e03e554c4b01",
+   "valido_ate": "2037-10-22T12:00:24+00:00"
+  }
+ ],
+ "intermediarias": 174,
+ "ignorados_vencidos_ou_nao_ac": 0
+}

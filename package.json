@@ -1,0 +1,19 @@
+{
+  "name": "ctrl-fiscal",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "dev:web": "npm run dev --workspace=apps/web",
+    "dev:painel": "npm run dev --workspace=apps/painel-fiscal"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5"
+  }
+}

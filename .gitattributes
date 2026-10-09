@@ -1,0 +1,33 @@
+# Finais de linha do CTRL Fiscal.
+#
+# Scripts de shell rodam dentro de containers/VPS Linux: LF OBRIGATÓRIO (um "\r" no fim da linha quebra o
+# interpretador, ex.: "set: pipefail\r: invalid option").
+*.sh            text eol=lf
+deploy/**       text eol=lf
+infra/mysql/init/* text eol=lf
+
+# Arquivos lidos por Docker/Compose/nginx/Caddy/Python: LF para arquivos NOVOS. "text=auto" preserva os que já
+# estão no repositório com CRLF (vindos do Windows) sem gerar modificações fantasmas; a normalização completa
+# (git add --renormalize .) fica para um commit próprio, combinado entre as frentes de trabalho.
+Dockerfile      text=auto eol=lf
+*.dockerfile    text=auto eol=lf
+*.yaml          text=auto eol=lf
+*.yml           text=auto eol=lf
+*.conf          text=auto eol=lf
+*.template      text=auto eol=lf
+*.py            text=auto eol=lf
+Caddyfile       text=auto eol=lf
+
+# Scripts do Windows continuam CRLF.
+*.ps1           text eol=crlf
+
+# Esquemas oficiais (XSD) e arquivos com SHA-256 conferido: nunca converter.
+*.xsd           -text
+SHA256SUMS.txt  -text
+
+# Binários
+*.pdf   binary
+*.png   binary
+*.ttf   binary
+*.zip   binary
+*.xlsx  binary

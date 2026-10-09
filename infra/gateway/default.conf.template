@@ -1,0 +1,106 @@
+# Gateway único exposto (127.0.0.1:${HTTP_PORT}:80). Upstreams resolvidos em tempo de
+# requisição para subir mesmo sem os containers de frontend.
+limit_req_zone $binary_remote_addr zone=api:10m rate=20r/s;
+limit_req_zone $binary_remote_addr zone=login:10m rate=10r/m;
+limit_req_status 429;
+
+# Esquema visto pelo navegador. Só o proxy HTTPS do host (TRUSTED_PROXY_IP, conexão de origem antes do realip) pode
+# informar X-Forwarded-Proto; qualquer outra origem (inclusive a instalação local sem proxy) usa o próprio $scheme.
+map $realip_remote_addr $ctrl_proto {
+    default                $scheme;
+    "${TRUSTED_PROXY_IP}"  $http_x_forwarded_proto;
+}
+
+# Content-Security-Policy por área. Painel (Vite): scripts só do próprio site; estilos inline dos componentes;
+# PDF do DANFSe exibido em iframe a partir de blob:. Portal (Next.js, pages router): sem script inline executável.
+# APIs: nada de conteúdo ativo.
+map $uri $csp {
+    ~^/api/      "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
+    ~^/fiscal/   "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; frame-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'";
+    default      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'";
+}
+
+server {
+    listen 80;
+    server_tokens off;
+    resolver 127.0.0.11 valid=10s ipv6=off;
+    client_max_body_size 1m;
+
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "same-origin" always;
+    add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
+    add_header Content-Security-Policy $csp always;
+    add_header Cross-Origin-Opener-Policy "same-origin" always;
+    # HSTS só faz sentido com TLS; acrescentar "Strict-Transport-Security" quando houver terminação HTTPS.
+
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Forwarded-Proto $ctrl_proto;
+    proxy_set_header X-Request-ID $request_id;
+    proxy_hide_header X-Powered-By;
+    proxy_read_timeout 60s;
+    client_body_timeout 30s;
+    # Nada de corpo/resposta em arquivo temporário: arquivos fiscais (ZIP/XLSX/XML/PDF) e PFX ficam em memória.
+    proxy_max_temp_file_size 0;
+
+    # ----- APIs (somente os prefixos públicos; rotas /internal não são roteadas)
+    location = /api/core/v1/auth/login {
+        limit_req zone=login burst=5 nodelay;
+        set $core_up ${CORE_API_UPSTREAM};
+        proxy_pass http://$core_up;
+    }
+    # Upload de certificado: corpo inteiro em memória (sem arquivo temporário com PFX e senha).
+    location ~ ^/api/core/v1/companies/[^/]+/certificate$ {
+        limit_req zone=api burst=5 nodelay;
+        client_max_body_size 256k;
+        client_body_buffer_size 256k;
+        set $core_up ${CORE_API_UPSTREAM};
+        proxy_pass http://$core_up;
+    }
+    location = /api/core/v1/auth/activate {
+        limit_req zone=login burst=5 nodelay;
+        set $core_up ${CORE_API_UPSTREAM};
+        proxy_pass http://$core_up;
+    }
+    location /api/core/v1/ {
+        limit_req zone=api burst=40 nodelay;
+        set $core_up ${CORE_API_UPSTREAM};
+        proxy_pass http://$core_up;
+    }
+    location ~ ^/api/fiscal/v1/companies/[^/]+/documents/import$ {
+        limit_req zone=api burst=10 nodelay;
+        client_max_body_size ${IMPORT_MAX_BODY};
+        set $fiscal_up ${FISCAL_API_UPSTREAM};
+        proxy_pass http://$fiscal_up;
+    }
+    location /api/fiscal/v1/ {
+        limit_req zone=api burst=40 nodelay;
+        set $fiscal_up ${FISCAL_API_UPSTREAM};
+        proxy_pass http://$fiscal_up;
+    }
+    location /api/ {
+        default_type application/problem+json;
+        return 404 '{"type":"https://ctrl-fiscal.local/problems/not-found","title":"Não encontrado","status":404,"code":"NOT_FOUND","detail":"Rota inexistente.","trace_id":"$request_id"}';
+    }
+
+    # ----- Frontends (Gemini): / -> Next.js ; /fiscal/ -> painel (Nginx)
+    location /fiscal/ {
+        set $painel_up ${PAINEL_UPSTREAM};
+        proxy_pass http://$painel_up;
+        error_page 502 503 504 = @frontend_down;
+    }
+    location / {
+        set $web_up ${WEB_UPSTREAM};
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_pass http://$web_up;
+        error_page 502 503 504 = @frontend_down;
+    }
+    location @frontend_down {
+        default_type text/plain;
+        return 503 "Frontend indisponível no momento.";
+    }
+}

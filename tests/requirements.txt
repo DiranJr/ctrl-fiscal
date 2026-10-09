@@ -1,0 +1,4 @@
+# Dependências dos testes automatizados (além das do runtime em services/requirements.txt).
+-r ../services/requirements.txt
+pytest==9.1.1
+pypdf==6.19.0

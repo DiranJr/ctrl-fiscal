@@ -1,0 +1,129 @@
+/* CTRL Fiscal — tokens do padrão corporativo (branco, verde institucional #005B3A, cinza claro e grafite).
+   Contraste verificado para WCAG 2.1 AA: texto principal #1F2A30 sobre branco 14,9:1; texto secundário #4A5560
+   7,4:1; texto auxiliar #5F6B76 5,4:1; branco sobre #005B3A 8,1:1; verde sobre branco 8,1:1. */
+:root {
+  /* Verde institucional */
+  --color-primary: #005B3A;
+  --color-primary-hover: #00482E;
+  --color-primary-light: #E8F2EE;
+  --color-primary-border: #A9CFC0;
+
+  /* Superfícies: branco + cinza claro */
+  --color-bg-app: #FFFFFF;
+  --color-bg-card: #FFFFFF;
+  --color-bg-subtle: #F4F6F7;
+  --color-bg-muted: #E6E9EC;
+
+  /* Texto: grafite */
+  --color-text-main: #1F2A30;
+  --color-text-muted: #4A5560;
+  --color-text-subtle: #5F6B76;
+  --color-text-inverse: #FFFFFF;
+
+  /* Bordas discretas */
+  --color-border: #DDE2E6;
+  --color-border-hover: #C3CAD1;
+  --color-border-focus: #005B3A;
+
+  /* Estados (texto + ícone + cor; nunca só cor) */
+  --status-authorized-bg: #EAF6EF;
+  --status-authorized-text: #14583A;
+  --status-authorized-border: #A8D8BC;
+
+  --status-scheduled-bg: #EEF3FB;
+  --status-scheduled-text: #1D4A8F;
+  --status-scheduled-border: #BBCCEA;
+
+  --status-processing-bg: #FFF6E0;
+  --status-processing-text: #7A4A00;
+  --status-processing-border: #F2D58C;
+
+  --status-draft-bg: #F4F6F7;
+  --status-draft-text: #4A5560;
+  --status-draft-border: #C3CAD1;
+
+  --status-divergent-bg: #FFF2E8;
+  --status-divergent-text: #9A3A06;
+  --status-divergent-border: #F5C9A6;
+
+  --status-rejected-bg: #FDEEEE;
+  --status-rejected-text: #8F1D1D;
+  --status-rejected-border: #F0BDBD;
+
+  --status-withdrawn-bg: #F4F6F7;
+  --status-withdrawn-text: #5F6B76;
+  --status-withdrawn-border: #DDE2E6;
+
+  --color-danger: #B42318;
+  --color-danger-hover: #912018;
+
+  /* Tipografia */
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+
+  /* Sombras discretas */
+  --shadow-sm: 0 1px 2px 0 rgba(31, 42, 48, 0.05);
+  --shadow-md: 0 4px 8px -2px rgba(31, 42, 48, 0.08);
+  --shadow-lg: 0 10px 20px -6px rgba(31, 42, 48, 0.12);
+  --shadow-xl: 0 20px 30px -10px rgba(31, 42, 48, 0.18);
+
+  /* Raios */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-full: 9999px;
+
+  /* Transições curtas (desativadas com prefers-reduced-motion) */
+  --transition-fast: 120ms ease-out;
+  --transition-normal: 200ms ease-out;
+
+  /* Layout */
+  --sidebar-width: 248px;
+  --sidebar-collapsed-width: 64px;
+  --header-height: 56px;
+}
+
+/* Foco sempre visível (teclado) */
+*:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Utilitários compartilhados entre portal (Next.js) e painel (Vite) */
+.ui-sr-only {
+  position: absolute !important;
+  width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+.ui-skip-link {
+  position: absolute; left: 0.5rem; top: -3rem; z-index: 2000;
+  background: var(--color-primary); color: #fff; padding: 0.5rem 0.75rem; border-radius: var(--radius-md);
+}
+.ui-skip-link:focus { top: 0.5rem; }
+.ui-num { font-variant-numeric: tabular-nums; white-space: nowrap; text-align: right; }
+.ui-mono { font-family: var(--font-mono); }
+.ui-only-mobile { display: none; }
+@media (max-width: 767px) {
+  .ui-only-desktop { display: none !important; }
+  .ui-only-mobile { display: initial; }
+}
+@keyframes ui-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+@keyframes ui-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+/* compatibilidade com nomes antigos */
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+
+.ui-table tbody tr[data-clickable="true"]:hover { background-color: var(--color-bg-subtle); }
+.ui-table tbody tr[data-selected="true"] { background-color: var(--color-primary-light); }
+.ui-button:not(:disabled):hover[data-variant="primary"] { background-color: var(--color-primary-hover); }
+.ui-button:not(:disabled):hover[data-variant="outline"],
+.ui-button:not(:disabled):hover[data-variant="ghost"] { background-color: var(--color-bg-subtle); }
+.ui-button:not(:disabled):hover[data-variant="danger"] { background-color: var(--color-danger-hover); }

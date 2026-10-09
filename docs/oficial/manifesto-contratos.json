@@ -1,0 +1,104 @@
+{
+    "obtido_em":  "2026-10-07T15:01:21-03:00",
+    "certificado":  "e-CNPJ A1 da empresa no repositório Windows (identificação omitida na publicação)",
+    "documentos":  [
+                       {
+                           "ambiente":  "producao-restrita",
+                           "documento":  "sefin",
+                           "pagina":  "https://sefin.producaorestrita.nfse.gov.br/API/SefinNacional/docs/index",
+                           "pagina_status":  200,
+                           "pagina_sha256":  "A8DD42E6A49261CFB9FFB81893FEF4B2AD150D83DC0F3D32FE26C5BBB7EB1806",
+                           "erro":  null,
+                           "especificacoes":  [
+                                                  {
+                                                      "url":  "https://sefin.producaorestrita.nfse.gov.br/SefinNacional/swagger/docs/v1",
+                                                      "status":  200,
+                                                      "bytes":  14297,
+                                                      "sha256":  "7F24FB634AB8829B394BEF7F6C499E28F44192A8C9FC59E3938B88802CB47995",
+                                                      "info_version":  "v1",
+                                                      "arquivo":  "sefin.openapi.json",
+                                                      "erro":  null
+                                                  }
+                                              ]
+                       },
+                       {
+                           "ambiente":  "producao-restrita",
+                           "documento":  "adn-contribuintes",
+                           "pagina":  "https://adn.producaorestrita.nfse.gov.br/contribuintes/docs/index.html",
+                           "pagina_status":  200,
+                           "pagina_sha256":  "2A5BD3EB9231E44870229C4E07ADC72587F5DA095B7055D6E1DEF9CF055D23C8",
+                           "erro":  null,
+                           "especificacoes":  [
+
+                                              ]
+                       },
+                       {
+                           "ambiente":  "producao-restrita",
+                           "documento":  "adn-parametrizacao",
+                           "pagina":  "https://adn.producaorestrita.nfse.gov.br/parametrizacao/docs/index.html",
+                           "pagina_status":  200,
+                           "pagina_sha256":  "E3B750347EF35BA8BA82DA0FBA210842842B251FF21B51754F2083937A9FBD6D",
+                           "erro":  null,
+                           "especificacoes":  [
+
+                                              ]
+                       },
+                       {
+                           "ambiente":  "producao-restrita",
+                           "documento":  "adn-danfse",
+                           "pagina":  "https://adn.producaorestrita.nfse.gov.br/danfse/docs/index.html",
+                           "pagina_status":  404,
+                           "pagina_sha256":  null,
+                           "erro":  "O servidor remoto retornou um erro: (404) Não Localizado."
+                       },
+                       {
+                           "ambiente":  "producao",
+                           "documento":  "sefin",
+                           "pagina":  "https://sefin.nfse.gov.br/SefinNacional/docs/index",
+                           "pagina_status":  200,
+                           "pagina_sha256":  "ABEF1B86103B4DF682EB235DD149CE7DA6715F40B3A4CC6782158AF6DF3EE23B",
+                           "erro":  null,
+                           "especificacoes":  [
+                                                  {
+                                                      "url":  "https://sefin.nfse.gov.br/SefinNacional//swagger/docs/v1",
+                                                      "status":  200,
+                                                      "bytes":  14271,
+                                                      "sha256":  "7966A650F131D89270D4879F5791FE542DAEAC926A178BDCD90B05392A511B6E",
+                                                      "info_version":  "v1",
+                                                      "arquivo":  "sefin.openapi.json",
+                                                      "erro":  null
+                                                  }
+                                              ]
+                       },
+                       {
+                           "ambiente":  "producao",
+                           "documento":  "adn-contribuintes",
+                           "pagina":  "https://adn.nfse.gov.br/contribuintes/docs/index.html",
+                           "pagina_status":  200,
+                           "pagina_sha256":  "F9F95009022ED7F89DB195AF97D2C0486DC58660D370AE90847021488C702761",
+                           "erro":  null,
+                           "especificacoes":  [
+
+                                              ]
+                       },
+                       {
+                           "ambiente":  "producao",
+                           "documento":  "adn-parametrizacao",
+                           "pagina":  "https://adn.nfse.gov.br/parametrizacao/docs/index.html",
+                           "pagina_status":  200,
+                           "pagina_sha256":  "A0B443BBC620DE85BC8FE849E05E414A7815955113FF62E3D78638DB043BA999",
+                           "erro":  null,
+                           "especificacoes":  [
+
+                                              ]
+                       },
+                       {
+                           "ambiente":  "producao",
+                           "documento":  "adn-danfse",
+                           "pagina":  "https://adn.nfse.gov.br/danfse/docs/index.html",
+                           "pagina_status":  503,
+                           "pagina_sha256":  null,
+                           "erro":  "O servidor remoto retornou um erro: (503) Servidor Não Disponível."
+                       }
+                   ]
+}

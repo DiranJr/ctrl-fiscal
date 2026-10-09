@@ -1,0 +1,205 @@
+/* CTRL Fiscal — padrão das telas Painel, Clientes, Sincronização, Importar/Exportar e Configurações.
+   Somente tokens (var(--color-*), var(--status-*)); sem cores fixas e sem remover o foco visível. */
+
+/* ------------------------------------------------------------------ seções (h2) */
+.pf-section {
+  background: var(--color-bg-card); border: 1px solid var(--color-border); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm); min-width: 0; display: flex; flex-direction: column;
+}
+.pf-section-head {
+  display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 0.75rem;
+  padding: 1rem 1.25rem; border-bottom: 1px solid var(--color-border);
+}
+.pf-section-title { font-size: 1rem; font-weight: 600; color: var(--color-text-main); }
+.pf-section-desc { margin-top: 0.25rem; font-size: 0.8125rem; color: var(--color-text-muted); }
+.pf-section-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+.pf-section-body { padding: 1.25rem; display: flex; flex-direction: column; gap: 1rem; flex: 1; min-width: 0; }
+.pf-subtitle { font-size: 0.9375rem; font-weight: 600; color: var(--color-text-main); }
+.pf-muted { font-size: 0.8125rem; color: var(--color-text-muted); }
+.pf-help { font-size: 0.75rem; color: var(--color-text-subtle); }
+
+/* ------------------------------------------------------------------ grades responsivas (sem largura fixa) */
+.pf-grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); gap: 1rem; align-items: start; }
+.pf-grid-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr)); gap: 0.75rem; }
+.pf-form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr)); gap: 1rem; align-items: start; }
+.pf-form-grid > .pf-span-all { grid-column: 1 / -1; }
+.pf-actions-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.75rem; }
+.pf-actions-end { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0.5rem; }
+
+/* ------------------------------------------------------------------ blocos rótulo/valor */
+.pf-tile { padding: 0.75rem; border-radius: var(--radius-md); min-width: 0; }
+.pf-tile[data-variant="subtle"] { background: var(--color-bg-subtle); }
+.pf-tile[data-variant="outline"] { border: 1px solid var(--color-border); background: var(--color-bg-card); }
+.pf-tile-label { font-size: 0.75rem; color: var(--color-text-subtle); }
+.pf-tile-value { margin-top: 0.25rem; font-size: 0.875rem; font-weight: 600; color: var(--color-text-main); overflow-wrap: anywhere; }
+.pf-tile-value[data-size="lg"], .pf-tile-value .pf-big { font-size: 1.25rem; font-weight: 700; }
+.pf-tile-hint { margin-top: 0.125rem; font-size: 0.6875rem; color: var(--color-text-subtle); }
+
+/* ------------------------------------------------------------------ indicadores clicáveis (Painel) */
+.pf-stat {
+  display: flex; flex-direction: column; gap: 0.5rem; width: 100%; text-align: left; font: inherit; color: inherit;
+  background: var(--color-bg-card); border: 1px solid var(--color-border); border-radius: var(--radius-lg);
+  padding: 1.125rem 1.25rem; box-shadow: var(--shadow-sm); cursor: pointer;
+  transition: border-color var(--transition-fast), transform var(--transition-fast);
+}
+.pf-stat:hover { border-color: var(--color-primary-border); transform: translateY(-2px); }
+.pf-stat-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
+  font-size: 0.8125rem; font-weight: 600; color: var(--color-text-muted); }
+.pf-stat-count { font-size: 1.875rem; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+.pf-stat-sub { font-size: 0.75rem; color: var(--color-text-subtle); }
+
+/* ------------------------------------------------------------------ avisos com tokens de estado */
+.pf-notice {
+  display: flex; align-items: flex-start; gap: 0.625rem; padding: 0.75rem 0.875rem; border-radius: var(--radius-md);
+  border: 1px solid var(--status-draft-border); background: var(--status-draft-bg); color: var(--status-draft-text);
+  font-size: 0.8125rem; line-height: 1.45; min-width: 0;
+}
+.pf-notice[data-variant="info"] { border-color: var(--status-scheduled-border); background: var(--status-scheduled-bg); color: var(--status-scheduled-text); }
+.pf-notice[data-variant="success"] { border-color: var(--status-authorized-border); background: var(--status-authorized-bg); color: var(--status-authorized-text); }
+.pf-notice[data-variant="warning"] { border-color: var(--status-processing-border); background: var(--status-processing-bg); color: var(--status-processing-text); }
+.pf-notice[data-variant="error"] { border-color: var(--status-rejected-border); background: var(--status-rejected-bg); color: var(--status-rejected-text); }
+.pf-notice-glyph {
+  display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 1.25rem; height: 1.25rem;
+  border-radius: var(--radius-full); border: 1px solid currentColor; font-size: 0.6875rem; font-weight: 700;
+}
+.pf-notice-body { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.pf-notice-title { font-weight: 600; margin-bottom: 0.125rem; }
+.pf-notice-action { flex-shrink: 0; }
+
+/* ------------------------------------------------------------------ listas */
+.pf-list { list-style: none; display: flex; flex-direction: column; gap: 0.5rem; }
+.pf-task {
+  display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.75rem;
+  padding: 0.75rem; border: 1px solid var(--color-border); border-radius: var(--radius-md);
+}
+.pf-task-title { font-weight: 600; font-size: 0.875rem; color: var(--color-text-main); }
+.pf-bullets { padding-left: 1.25rem; display: flex; flex-direction: column; gap: 0.25rem; }
+.pf-chips { list-style: none; display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.pf-errors { list-style: none; display: flex; flex-direction: column; gap: 0.25rem; }
+.pf-errors li {
+  font-size: 0.75rem; padding: 0.375rem 0.5rem; border-radius: var(--radius-sm); overflow-wrap: anywhere;
+  border: 1px solid var(--status-rejected-border); background: var(--status-rejected-bg); color: var(--status-rejected-text);
+}
+
+/* ------------------------------------------------------------------ formulários */
+.pf-fieldset { border: none; min-width: 0; }
+.pf-fieldset legend { font-size: 0.8125rem; font-weight: 500; color: var(--color-text-main); margin-bottom: 0.375rem; }
+.pf-checks { display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; font-size: 0.875rem; }
+.pf-checks label { display: inline-flex; align-items: center; gap: 0.375rem; cursor: pointer; }
+.pf-field-label { display: block; font-size: 0.8125rem; font-weight: 500; color: var(--color-text-main); margin-bottom: 0.25rem; }
+.pf-file-input {
+  display: block; width: 100%; max-width: 100%; padding: 0.4375rem; font: inherit; font-size: 0.8125rem;
+  border: 1px solid var(--color-border-hover); border-radius: var(--radius-md); background: var(--color-bg-card); color: var(--color-text-main);
+}
+.pf-subpanel { border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: 1rem; display: flex; flex-direction: column; gap: 1rem; }
+
+/* área de seleção de arquivos: input real visualmente oculto, foco refletido no contêiner */
+.pf-dropzone {
+  border: 2px dashed var(--color-border-hover); border-radius: var(--radius-md); padding: 1.25rem 1rem;
+  text-align: center; background: var(--color-bg-subtle);
+}
+.pf-dropzone:focus-within { outline: 2px solid var(--color-primary); outline-offset: 2px; border-color: var(--color-primary); }
+.pf-dropzone label {
+  display: inline-flex; align-items: center; gap: 0.5rem; cursor: pointer; font-weight: 600; font-size: 0.875rem; color: var(--color-primary);
+}
+.pf-dropzone label:hover { text-decoration: underline; }
+
+/* painel de acompanhamento de job */
+.pf-job { border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: 1rem; background: var(--color-bg-subtle);
+  display: flex; flex-direction: column; gap: 0.75rem; }
+.pf-job-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem; }
+
+@media (max-width: 767px) {
+  .pf-section-head { padding: 0.875rem; }
+  .pf-section-body { padding: 0.875rem; }
+  .pf-stat { padding: 0.875rem 1rem; }
+  .pf-stat-count { font-size: 1.5rem; }
+}
+
+/* ------------------------------------------------------------------ identificação do workspace (cabeçalho) */
+.pf-workspace { display: flex; flex-direction: column; align-items: flex-end; gap: 0.125rem; min-width: 0; max-width: 28rem; }
+.pf-workspace-name, .pf-workspace-select {
+  font-size: 0.875rem; font-weight: 600; color: var(--color-text-main); max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pf-workspace-select {
+  padding: 0.25rem 0.5rem; border: 1px solid var(--color-border-hover); border-radius: var(--radius-md);
+  background: var(--color-bg-card); font: inherit; font-weight: 600;
+}
+.pf-workspace-meta { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 0.375rem;
+  font-size: 0.75rem; color: var(--color-text-muted); font-variant-numeric: tabular-nums; }
+.pf-workspace[data-compact="true"] { align-items: flex-start; max-width: 100%; }
+.pf-workspace[data-compact="true"] .pf-workspace-meta { justify-content: flex-start; }
+.pf-workspace[data-compact="true"] .pf-workspace-select { width: 100%; }
+
+/* ------------------------------------------------------------------ prontidão do workspace */
+.pf-ready-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr)); gap: 0.75rem; }
+.pf-ready-op { border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: 0.75rem; display: flex;
+  flex-direction: column; gap: 0.5rem; min-width: 0; }
+.pf-ready-op[data-ready="true"] { border-color: var(--status-authorized-border); }
+.pf-ready-op-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; font-weight: 600; font-size: 0.875rem; }
+.pf-ready-issues { list-style: none; display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.75rem; }
+.pf-ready-issues li { overflow-wrap: anywhere; padding-left: 0.75rem; position: relative; color: var(--color-text-muted); }
+.pf-ready-issues li::before { content: "•"; position: absolute; left: 0; }
+.pf-ready-issues li[data-severity="error"] { color: var(--status-rejected-text); }
+.pf-ready-issues li[data-severity="warning"] { color: var(--status-processing-text); }
+.pf-money { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* identificação do workspace: no cabeçalho a partir de 1024px; abaixo disso, numa faixa própria */
+.pf-ws-header { display: inline-flex; min-width: 0; }
+.pf-ws-strip { display: none; }
+@media (max-width: 1023px) {
+  .pf-ws-header { display: none !important; }
+  .pf-ws-strip { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem;
+    padding: 0.375rem 0.75rem; border-bottom: 1px solid var(--color-border); background: var(--color-bg-subtle); min-width: 0; }
+}
+
+/* ------------------------------------------------------------------ perfis de serviço (revisão) */
+.pf-origem { display: inline-flex; align-items: center; gap: 0.25rem; padding: 0 0.375rem; border-radius: var(--radius-sm);
+  font-size: 0.6875rem; font-weight: 600; line-height: 1.25rem; border: 1px solid var(--color-border); white-space: nowrap;
+  color: var(--color-text-muted); background: var(--color-bg-subtle); vertical-align: middle; }
+.pf-origem::before { font-weight: 700; }
+.pf-origem-xml { border-color: var(--status-authorized-border); background: var(--status-authorized-bg); color: var(--status-authorized-text); }
+.pf-origem-xml::before { content: "XML"; display: none; }
+.pf-origem-hist { border-color: var(--status-processing-border); background: var(--status-processing-bg); color: var(--status-processing-text); }
+.pf-origem-hist::before { content: "⟲"; }
+.pf-origem-tabela { border-color: var(--status-scheduled-border); background: var(--status-scheduled-bg); color: var(--status-scheduled-text); }
+.pf-origem-tabela::before { content: "§"; }
+.pf-origem-usuario { border-color: var(--color-border-hover); background: var(--color-bg-card); color: var(--color-text-main); }
+.pf-origem-usuario::before { content: "✎"; }
+.pf-origem-legenda { display: flex; flex-wrap: wrap; align-items: center; gap: 0.375rem; }
+.pf-filtro { display: flex; flex-wrap: wrap; gap: 0.375rem; }
+.pf-filtro-btn { font: inherit; font-size: 0.8125rem; padding: 0.25rem 0.625rem; border-radius: var(--radius-full);
+  border: 1px solid var(--color-border-hover); background: var(--color-bg-card); color: var(--color-text-main); cursor: pointer; }
+.pf-filtro-btn[aria-pressed="true"] { background: var(--color-primary); border-color: var(--color-primary); color: var(--color-text-inverse, #fff); }
+.pf-perfis { list-style: none; display: flex; flex-direction: column; gap: 0.75rem; }
+.pf-perfil { border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: 1rem; display: flex;
+  flex-direction: column; gap: 0.75rem; min-width: 0; background: var(--color-bg-card); }
+.pf-perfil[data-status="APPROVED"] { border-left: 4px solid var(--status-authorized-border); }
+.pf-perfil[data-status="PENDING_REVIEW"] { border-left: 4px solid var(--status-processing-border); }
+.pf-perfil[data-status="INACTIVE"] { opacity: 0.85; border-left: 4px solid var(--color-border-hover); }
+.pf-perfil-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap; }
+.pf-perfil-campos { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr)); gap: 0.625rem 1rem; }
+.pf-perfil-campos > div { min-width: 0; }
+.pf-perfil-campos > .pf-span-all { grid-column: 1 / -1; }
+.pf-perfil-campos dt { font-size: 0.75rem; color: var(--color-text-subtle); display: flex; flex-wrap: wrap; gap: 0.375rem; align-items: center; }
+.pf-perfil-campos dd { font-size: 0.8125rem; color: var(--color-text-main); overflow-wrap: anywhere; margin-top: 0.125rem; }
+.pf-perfil-pend { border-radius: var(--radius-md); padding: 0.5rem 0.75rem; font-size: 0.8125rem; overflow-wrap: anywhere; }
+.pf-perfil-pend ul { padding-left: 1.125rem; margin-top: 0.25rem; display: flex; flex-direction: column; gap: 0.125rem; }
+.pf-perfil-pend[data-severity="error"] { border: 1px solid var(--status-rejected-border); background: var(--status-rejected-bg); color: var(--status-rejected-text); }
+.pf-perfil-pend[data-severity="warning"] { border: 1px solid var(--status-processing-border); background: var(--status-processing-bg); color: var(--status-processing-text); }
+.pf-perfil-info, .pf-evid { font-size: 0.8125rem; }
+.pf-perfil-info summary, .pf-evid summary { cursor: pointer; color: var(--color-text-main); }
+.pf-perfil-info ul { padding-left: 1.125rem; margin-top: 0.375rem; display: flex; flex-direction: column; gap: 0.25rem; }
+.pf-evid-dl { margin-top: 0.5rem; }
+.pf-chips-inline { display: flex; flex-wrap: wrap; gap: 0.375rem 0.75rem; }
+.pf-check { display: flex; align-items: flex-start; gap: 0.5rem; font-size: 0.875rem; cursor: pointer; }
+.pf-check input { margin-top: 0.2rem; }
+.pf-historico { padding-left: 1.25rem; display: flex; flex-direction: column; gap: 0.5rem; font-size: 0.8125rem; }
+
+/* ------------------------------------------------------------------ prontidão em seções e dados do prestador */
+.pf-secoes { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr)); gap: 0.75rem; }
+.pf-secao { border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: 0.75rem; display: flex; flex-direction: column; gap: 0.5rem; min-width: 0; }
+.pf-secao[data-ok="true"] { border-color: var(--status-authorized-border); }
+.pf-secao[data-ok="false"] { border-color: var(--status-rejected-border); }
+.pf-prest-tabela td, .pf-prest-tabela th { vertical-align: top; overflow-wrap: anywhere; }

@@ -1,0 +1,225 @@
+# =============================================================================================================
+# CTRL Fiscal — sobreposição de PRODUÇÃO para a VPS Linux (aplicada SOBRE o compose.yaml da raiz).
+#
+#   docker compose -p ctrlfiscal --env-file .env -f compose.yaml -f deploy/compose.prod.yaml config   # conferir
+#   deploy/implantar.sh <VERSAO> --pacote <arquivo>                                     # implantar (manual)
+#
+# Caminhos relativos são resolvidos a partir da RAIZ do repositório (diretório do primeiro arquivo -f).
+# Requer Docker Compose v2.24+.
+#
+# Topologia na VPS: o Nginx DO HOST (que já atende outros sistemas e já tem o certificado do Certbot) termina o
+# HTTPS de ${DOMINIO} e encaminha para o gateway nginx desta pilha em 127.0.0.1:${HTTP_PORT}. Esta pilha NÃO
+# publica 80/443 e não disputa portas com outros sistemas (ex.: 127.0.0.1:3001 já é usado por outro sistema).
+#
+# O que muda em relação ao compose.yaml (sem desligar nenhum controle existente: CSP, CSRF, limites de corpo,
+# rede egress-oficial, read_only, cap_drop, no-new-privileges, usuários não-root):
+#   - imagens identificadas pela VERSÃO (SHA curto do commit): ctrlfiscal/<serviço>:${VERSAO}; nunca dev/latest;
+#     rótulos OCI (commit, versão, data) gravados no build;
+#   - APP_ENV=production: o core-api só inicia com origem https://${DOMINIO} e cookie Secure;
+#   - fiscal-worker no perfil "ativo": sincronização ADN, filas de emissão/cancelamento, importações e limpezas
+#     SÓ rodam no ambiente ATIVO (COMPOSE_PROFILES=ativo). Em espera: COMPOSE_PROFILES vazio (sem worker);
+#   - gateway aceita X-Forwarded-For/X-Forwarded-Proto SOMENTE de TRUSTED_PROXY_IP (10.250.250.1: gateway da rede
+#     "publico", por onde chegam as conexões do Nginx do host à porta de loopback publicada);
+#   - orçamento de recursos para VPS COMPARTILHADA (tabela abaixo), pool de conexões e MySQL dimensionados;
+#   - logs json-file com rotação (10m × 5), healthchecks também nos frontends e no gateway;
+#   - TZ=America/Sao_Paulo nos serviços de aplicação (o código grava em UTC; o fuso só afeta logs). O MySQL
+#     continua em UTC de propósito, igual à instalação local, para não alterar valores ao migrar os dados;
+#   - rede "edge" (gateway ↔ frontends) passa a ser interna (sem saída para a internet).
+#
+# ORÇAMENTO DE RECURSOS — VPS de 4 vCPU / 16 GB COMPARTILHADA com o host e outros sistemas (ex.: Carreiras).
+# Limites são TETOS (não reservas). Soma dos tetos ≈ 3,1 vCPU e ≈ 3,9 GB: sobra ≥ 0,9 vCPU e ≈ 12 GB garantidos
+# para o host, o Nginx e os demais sistemas mesmo com o CTRL Fiscal no limite.
+#
+#   serviço          CPU    memória   observação
+#   mysql            1.00   1536m     innodb_buffer_pool_size=1G, max_connections=120, performance_schema=OFF
+#   core-api         0.40    384m     1 processo uvicorn; pool 5+5
+#   fiscal-api       0.50    640m     1 processo uvicorn; DANFSe/ZIP; pool 5+5
+#   fiscal-worker    0.50    640m     só no ambiente ativo; lotes/exportações; pool 5+5
+#   nfse-api         0.20    256m     1 processo uvicorn; pool 5+5
+#   web (Next.js)    0.20    320m
+#   painel-fiscal    0.10     64m     nginx estático
+#   gateway          0.20    128m     corpos de upload em memória (até 26 MB por requisição)
+#   ----------------------------------
+#   total            3.10   3968m
+#   *-migrate        0.50    256m     execução única a cada implantação (não somam em regime)
+#
+#   Conexões MySQL: 4 serviços × (5 + 5) = 40 no pior caso + migrações/root ≪ max_connections=120.
+# =============================================================================================================
+
+x-prod-logging: &prod-logging
+  driver: json-file
+  options: {max-size: "10m", max-file: "5"}
+
+x-prod-env: &prod-env
+  APP_ENV: production
+  TZ: America/Sao_Paulo
+  ENABLE_API_DOCS: "false"
+  DB_POOL_SIZE: ${DB_POOL_SIZE:-5}
+  DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-5}
+  DB_POOL_TIMEOUT: ${DB_POOL_TIMEOUT:-30}
+
+# Rótulos OCI gravados em cada imagem construída (deploy/empacotar-imagens.sh define CTRL_COMMIT/CTRL_BUILD_DATE).
+x-prod-labels: &prod-labels
+  org.opencontainers.image.title: "CTRL Fiscal"
+  org.opencontainers.image.version: ${VERSAO:-desconhecida}
+  org.opencontainers.image.revision: ${CTRL_COMMIT:-desconhecido}
+  org.opencontainers.image.created: ${CTRL_BUILD_DATE:-desconhecida}
+
+x-migrate-limits: &migrate-limits
+  deploy: {resources: {limits: {cpus: "0.50", memory: 256m}}}
+  # Execução única (alembic upgrade): o HEALTHCHECK HTTP herdado da imagem da API não se aplica.
+  healthcheck: {disable: true}
+
+services:
+  mysql:
+    restart: unless-stopped
+    command:
+      - mysqld
+      - --innodb-buffer-pool-size=1G
+      - --max-connections=120
+      - --performance-schema=OFF      # economiza ~200–400 MB; não é controle de segurança
+    logging: *prod-logging
+    # Sem TZ: servidor em UTC (mesmo comportamento da instalação local).
+    deploy: {resources: {limits: {cpus: "1.00", memory: 1536m}}}
+
+  # ------------------------------------------------------------------------------------------ migrações
+  core-migrate:
+    image: ctrlfiscal/core-api:${VERSAO:?defina VERSAO (SHA curto do commit implantado)}
+    build: {labels: *prod-labels}
+    environment: {TZ: America/Sao_Paulo}
+    logging: *prod-logging
+    <<: *migrate-limits
+  fiscal-migrate:
+    image: ctrlfiscal/fiscal-api:${VERSAO:?defina VERSAO}
+    build: {labels: *prod-labels}
+    environment: {TZ: America/Sao_Paulo}
+    logging: *prod-logging
+    <<: *migrate-limits
+  nfse-migrate:
+    image: ctrlfiscal/nfse-api:${VERSAO:?defina VERSAO}
+    build: {labels: *prod-labels}
+    environment: {TZ: America/Sao_Paulo}
+    logging: *prod-logging
+    <<: *migrate-limits
+
+  # ------------------------------------------------------------------------------------------ serviços
+  core-api:
+    image: ctrlfiscal/core-api:${VERSAO:?defina VERSAO}
+    build: {labels: *prod-labels}
+    restart: unless-stopped
+    environment:
+      <<: *prod-env
+      # Origem única: o domínio público servido pelo Nginx do host. CSRF/CORS e cookie "__Secure-" dependem disso.
+      ALLOWED_ORIGINS: "https://${DOMINIO:?defina DOMINIO, por exemplo fiscal.grupoaelengenharia.com.br}"
+      ALLOW_INSECURE_DEV_COOKIE: "false"
+    logging: *prod-logging
+    deploy: {resources: {limits: {cpus: "0.40", memory: 384m}}}
+
+  fiscal-api:
+    image: ctrlfiscal/fiscal-api:${VERSAO:?defina VERSAO}
+    build: {labels: *prod-labels}
+    restart: unless-stopped
+    environment:
+      <<: *prod-env
+    # Fontes licenciadas do DANFSe (opcional): descomente e aponte DANFSE_FONT_DIR=/fontes no .env.
+    # As fontes Microsoft NÃO são instaladas nem distribuídas; sem elas usa-se Liberation Sans (declarado no PDF).
+    # volumes:
+    #   - /opt/ctrlfiscal/fontes-danfse:/fontes:ro
+    logging: *prod-logging
+    deploy: {resources: {limits: {cpus: "0.50", memory: 640m}}}
+
+  fiscal-worker:
+    image: ctrlfiscal/fiscal-worker:${VERSAO:?defina VERSAO}
+    build: {labels: *prod-labels}
+    restart: unless-stopped
+    # Só no ambiente ATIVO. Dois workers (VPS e instalação local) com o mesmo certificado duplicariam consultas ao
+    # ADN e pedidos de cancelamento; por isso o worker não existe no ambiente em espera.
+    profiles: ["ativo"]
+    environment:
+      <<: *prod-env
+      # Valores conservadores para VPS compartilhada (emissão em produção continua bloqueada no código).
+      EMISSION_MAX_IN_FLIGHT: ${EMISSION_MAX_IN_FLIGHT:-5}
+      EMISSION_BATCH_SIZE: ${EMISSION_BATCH_SIZE:-5}
+      SYNC_MAX_PAGES_PER_CYCLE: ${SYNC_MAX_PAGES_PER_CYCLE:-10}
+    # volumes:
+    #   - /opt/ctrlfiscal/fontes-danfse:/fontes:ro
+    logging: *prod-logging
+    deploy: {resources: {limits: {cpus: "0.50", memory: 640m}}}
+
+  nfse-api:
+    image: ctrlfiscal/nfse-api:${VERSAO:?defina VERSAO}
+    build: {labels: *prod-labels}
+    restart: unless-stopped
+    environment:
+      <<: *prod-env
+    logging: *prod-logging
+    deploy: {resources: {limits: {cpus: "0.20", memory: 256m}}}
+
+  # ------------------------------------------------------------------------------------------ frontends
+  web:
+    image: ctrlfiscal/web:${VERSAO:?defina VERSAO}
+    build: {labels: *prod-labels}
+    restart: unless-stopped
+    environment:
+      TZ: America/Sao_Paulo
+      NEXT_TELEMETRY_DISABLED: "1"
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/login',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging: *prod-logging
+    deploy: {resources: {limits: {cpus: "0.20", memory: 320m}}}
+
+  painel-fiscal:
+    image: ctrlfiscal/painel-fiscal:${VERSAO:?defina VERSAO}
+    build: {labels: *prod-labels}
+    restart: unless-stopped
+    environment:
+      TZ: America/Sao_Paulo
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/fiscal/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging: *prod-logging
+    deploy: {resources: {limits: {cpus: "0.10", memory: 64m}}}
+
+  # ------------------------------------------------------------------------------------------ gateway nginx
+  gateway:
+    restart: unless-stopped
+    environment:
+      TZ: America/Sao_Paulo
+      # Único remetente cujo X-Forwarded-For/X-Forwarded-Proto é aceito: o gateway da rede "publico" (10.250.250.1),
+      # origem das conexões do Nginx do host à porta 127.0.0.1:${HTTP_PORT} publicada.
+      TRUSTED_PROXY_IP: ${TRUSTED_PROXY_IP:?defina TRUSTED_PROXY_IP (10.250.250.1)}
+    volumes:
+      # Gera /etc/nginx/conf.d/00-realip.conf: o IP real do cliente (informado pelo Nginx do host) volta a valer
+      # para os limites de requisição do nginx e para o X-Real-IP usado pelo core-api nos limites de login.
+      - ./deploy/gateway/00-realip.conf.template:/etc/nginx/templates/00-realip.conf.template:ro
+    # A porta continua SÓ em loopback: 127.0.0.1:${HTTP_PORT} (compose.yaml). Nunca use 3001 (outro sistema).
+    healthcheck:
+      # /api/ sem rota responde 404 do próprio nginx: prova que o gateway atende sem depender dos upstreams.
+      test: ["CMD-SHELL", "wget -q -S -O /dev/null http://127.0.0.1/api/ 2>&1 | grep -q ' 404'"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    # "publico" é a única rede NÃO interna do gateway: é por ela que a porta publicada chega ao container.
+    networks: [publico]
+    logging: *prod-logging
+    deploy: {resources: {limits: {cpus: "0.20", memory: 128m}}}
+
+networks:
+  edge:
+    internal: true    # frontends e gateway sem saída para a internet (a porta do gateway chega pela rede "publico")
+  publico:
+    # Sub-rede fixa e fora dos pools automáticos do Docker (172.17–31.x, 192.168.x). O gateway desta bridge
+    # (10.250.250.1) é o TRUSTED_PROXY_IP. Se colidir com rede do provedor/VPN (deploy/inventario-vps.sh), troque
+    # PROXY_SUBNET e TRUSTED_PROXY_IP juntos no .env.
+    ipam:
+      config:
+        - subnet: ${PROXY_SUBNET:-10.250.250.0/28}
+          gateway: ${TRUSTED_PROXY_IP:-10.250.250.1}
