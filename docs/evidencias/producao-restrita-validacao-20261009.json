@@ -1,79 +1,112 @@
 {
  "data": "2026-10-09",
- "ambiente_oficial": "Produção Restrita (adn/sefin.producaorestrita.nfse.gov.br)",
- "isolamento": "ambiente temporário (projeto ctrlfiscal-pr, porta 8097) restaurado de backup verificado; chaves de produção desligadas; removido ao final",
- "certificado": "certificado A1 da empresa instalado no conector temporário para Produção Restrita: cadeia ICP-Brasil, revogação, usos, validade e CNPJ conferidos (sem pendências)",
- "prontidao_conector_restrita": "READY",
- "parametrizacao_municipio_1505536": {
-  "convenio": {
-   "http": 200,
-   "aderenteAmbienteNacional": 1,
-   "aderenteEmissorNacional": 1,
-   "situacaoEmissaoPadraoContribuintesRFB": 1,
-   "aderenteMAN": 0,
-   "permiteAproveitametoDeCreditos": true
-  },
-  "aliquota_07.02.01.000_competencia_2026-10": {
-   "http": 200,
-   "aliquotas": {
-    "07.02.01.000": [
-     {
-      "Incidencia": "SIM",
-      "Aliq": 5.0,
-      "DtIni": "2025-09-12T00:00:00",
-      "DtFim": null
-     }
-    ]
-   }
-  },
-  "regimes_especiais_07.02.01.000": {
-   "http": 404,
-   "mensagem": "Parâmetros de regimes especiais não encontrados."
-  },
-  "retencoes": {
-   "http": 200,
-   "artigo_sexto_LC116": true,
-   "retencoes_municipais_decreto": 317,
-   "07.02.01.000_no_decreto": false
-  }
- },
- "referencia": {
-  "criterio": "última NFS-e emitida pela empresa (data de emissão 08/10/2026), XML oficial conferido: prestador = empresa, tpEmit=1",
-  "operacao": {
+ "ambiente_oficial": "Produção Restrita (sefin.producaorestrita.nfse.gov.br)",
+ "isolamento": "ambiente temporário (projeto ctrlfiscal-pr, porta 8097) restaurado de backup verificado; chaves de produção desligadas; removido ao final; operacional conferido sem alterações",
+ "cenario_de_teste": {
+  "aviso": "validação TÉCNICA; NÃO é a classificação nem a aprovação fiscal da operação real (perfil operacional inalterado)",
+  "referencia": "última NFS-e emitida pela empresa (08/10/2026), XML oficial",
+  "valor": "1.00",
+  "serie": "49001",
+  "codigos": {
    "cTribNac": "070201",
    "cNBS": "101021100",
-   "obra": "cObra presente",
-   "tribISSQN": "1 (tributável)",
-   "tpRetISSQN": "2 (retido pelo tomador)",
-   "IBSCBS": "AUSENTE na nota de origem"
+   "cIndOp": "020201",
+   "CST": "200",
+   "cClassTrib": "200046",
+   "indFinal": "0"
   },
-  "valor_teste": "1.00",
-  "recalculo": {
-   "vRetCP": {
-    "proporcao_da_origem": "5,5000%",
-    "novo": "0.06"
-   },
-   "totTrib_vTotTrib": {
-    "novo": {
-     "federal": "0.00",
-     "estadual": "0.00",
-     "municipal": "0.00"
-    }
-   },
-   "vISSQN": "calculado pela Sefin (5,00% do município)"
+  "obra": "endereço da obra (CEP de Parauapebas); cObra \"0\" da origem não usado",
+  "retencoes": {
+   "ISS": "retido pelo tomador (Sefin: 5,00%)",
+   "INSS": "0.06 (5,5% da origem)"
+  },
+  "tributos_aproximados": "valores de teste 0,00/0,00/0,05"
+ },
+ "pendencias_do_reaproveitamento_na_nota_real": [
+  "REFERENCE_OBRA_ID_INVALID (cObra \"0\")",
+  "REFERENCE_APPROX_DOUBTFUL (9,25/0,00/5,00)",
+  "REFERENCE_IBS_CBS_ABSENT"
+ ],
+ "tentativas": [
+  {
+   "nDPS": 1,
+   "resultado": "REJEITADA",
+   "codigo": "E0008",
+   "causa": "relógio local ~100 s adiantado em relação à Sefin",
+   "correcao": "dhEmi/dhEvento pelo horário oficial (cabeçalho Date da Sefin)"
+  },
+  {
+   "nDPS": 2,
+   "resultado": "não transmitida",
+   "causa": "rascunho rejeitado exige revisão antes de nova fila (regra correta)"
+  },
+  {
+   "nDPS": 2,
+   "resultado": "REJEITADA",
+   "codigo": "E0008",
+   "causa": "medição do relógio pelo caminho base (redirecionamento recusado)",
+   "correcao": "HEAD em /nfse"
+  },
+  {
+   "nDPS": 3,
+   "resultado": "REJEITADA",
+   "codigo": "E0714",
+   "causa": "c14n do libxml2 no lugar emitia xmlns=\"\" espúrio (digest e assinatura divergentes do .NET)",
+   "correcao": "c14n da cópia do elemento; conferida com .NET SignedXml.CheckSignature = True"
+  },
+  {
+   "nDPS": 4,
+   "resultado": "AUTORIZADA"
   }
- },
- "configuracao_da_operacao": {
-  "resultado": "NÃO APROVÁVEL",
-  "pendencia": "IBS_CBS_REQUIRED — cIndOp e cClassTrib não definidos; obrigatórios para fato gerador desde 01/10/2026 (empresa não optante do Simples)",
-  "evidencia_historica": "29 notas emitidas desta mesma operação (070201 + NBS 101021100), todas sem o grupo IBS/CBS"
- },
- "dps_do_teste": {
+ ],
+ "nfse_autorizada": {
+  "cStat": "100",
+  "ambGer": "2",
+  "tpAmb": "2",
   "serie": "49001",
-  "nDPS": 1,
-  "consulta_oficial_GET_dps": 404,
-  "codigo": "E2404",
-  "descricao": "Não foi gerada uma NFS-e com o identificador de DPS informado"
+  "nDPS": "4",
+  "dCompet": "2026-10-09",
+  "cTribNac": "070201",
+  "cNBS": "101021100",
+  "vServ": "1.00",
+  "tribISSQN": "1",
+  "tpRetISSQN": "2",
+  "vRetCP": "0.06",
+  "vBC": "1.00",
+  "pAliqAplic": "5.00",
+  "vISSQN": "0.05",
+  "vTotalRet": "0.11",
+  "vLiq": "0.89"
  },
- "transmissao": "NÃO REALIZADA — impedimento: classificação IBS/CBS da operação não definida (não inventada)"
+ "ibscbs_calculado_pela_sefin": {
+  "vBC": "0.95",
+  "pIBSUF": "0.10",
+  "pRedAliqUF": "50.00",
+  "pAliqEfetUF": "0.05",
+  "pCBS": "0.90",
+  "pRedAliqCBS": "50.00",
+  "pAliqEfetCBS": "0.45",
+  "vIBS": "0.00",
+  "vCBS": "0.00"
+ },
+ "pdf_danfse": {
+  "http": 200,
+  "tipo": "application/pdf",
+  "bytes": 84336,
+  "assinatura_pdf": true
+ },
+ "cancelamento": {
+  "evento": "101101",
+  "nSeqEvento": "1",
+  "situacao": "REGISTERED",
+  "consulta_oficial_http": 200,
+  "tipoEvento_consultado": 101101,
+  "situacao_da_nota": "CANCELLED"
+ },
+ "duplicidade": {
+  "clique_repetido": "mesmo lote",
+  "outro_pedido": "409 BATCH_CONFLICT",
+  "reenvio_apos_emissao": "409 BATCH_CONFLICT"
+ },
+ "chave_acesso": "150553…574344"
 }

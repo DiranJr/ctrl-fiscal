@@ -10,7 +10,7 @@ import gzip
 import json
 import os
 import uuid
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import httpx
 import pytest
@@ -48,12 +48,25 @@ class FakeGov:
         # aqui, de forma independente do backend, pela fórmula do XSD/Anexo I (vBC, vISSQN, vTotalRet, vLiq).
         self.embed_posted_dps = False
         self.aliquota_parametrizada = "2.00"  # usada pela "Sefin" quando a DPS não traz pAliq
+        # Relógio da "Sefin" (callable → datetime). Quando definido, toda resposta traz o cabeçalho Date e a DPS com
+        # dhEmi posterior ao processamento é rejeitada (E0008), como no ambiente oficial.
+        self.server_now = None
 
     def factory(self, service: str) -> httpx.Client:
         return httpx.Client(transport=httpx.MockTransport(lambda req: self.handle(service, req)))
 
     def handle(self, service: str, req: httpx.Request) -> httpx.Response:
+        resp = self._handle(service, req)
+        if self.server_now is not None:
+            from email.utils import format_datetime
+
+            resp.headers["date"] = format_datetime(self.server_now().astimezone(timezone.utc), usegmt=True)
+        return resp
+
+    def _handle(self, service: str, req: httpx.Request) -> httpx.Response:
         self.calls.append((service, req.method, req.url.host, req.url.path, req.url.query.decode()))
+        if req.method == "HEAD" and req.url.path in ("/SefinNacional", "/SefinNacional/"):
+            return httpx.Response(301, headers={"location": "/SefinNacional/"})  # como o oficial: redireciona
         path = req.url.path
         if service == "sefin" and req.method == "POST" and path == "/SefinNacional/nfse":
             return self._post_nfse(req)
@@ -99,6 +112,9 @@ class FakeGov:
         root = etree.fromstring(dps)
         inf = root.find(f"{NS}infDPS")
         dps_id = inf.get("Id")
+        if self.server_now is not None and datetime.fromisoformat(inf.findtext(f"{NS}dhEmi")) > self.server_now():
+            return httpx.Response(400, json={"erros": [{"codigo": "E0008", "descricao": "A data de emissão da DPS não "
+                                                                            "pode ser posterior à data do seu processamento."}]})
         prest = inf.findtext(f"{NS}prest/{NS}CNPJ")
         number = int(inf.findtext(f"{NS}nDPS"))
         toma = inf.findtext(f"{NS}toma/{NS}CNPJ")

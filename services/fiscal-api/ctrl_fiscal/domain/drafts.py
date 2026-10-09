@@ -571,6 +571,14 @@ def validate_draft(d: Draft, company: CompanyInfo, customer: dict | None, now: d
         issues.append(_issue("service.national_code", "NATIONAL_CODE_REQUIRED", "Código de tributação nacional obrigatório."))
     elif not re.match(r"^[0-9]{6}$", d.service_national_code):  # cTribNac: TSCodTribNac [0-9]{6}
         issues.append(_issue("service.national_code", "NATIONAL_CODE_FORMAT", "Código de tributação nacional deve ter 6 dígitos."))
+    if d.service_obra_code:
+        from .referencia import cno_cei_valido  # noqa: PLC0415
+
+        if not cno_cei_valido(d.service_obra_code):
+            # O leiaute aceita 1 a 30 caracteres (a Sefin não confere o CNO), mas cObra deve ser o CNO/CEI da obra.
+            issues.append(_issue("service.obra_code", "OBRA_CODE_NOT_CNO",
+                                 f"cObra \"{d.service_obra_code}\" não tem o formato de CNO/CEI (12 dígitos): confira a "
+                                 "identificação da obra ou use o endereço, a inscrição imobiliária ou o CIB.", "warning"))
     tax = d.tax_settings or {}
     if tax.get("issqn_taxation") is None:  # tribISSQN [1..1]
         issues.append(_issue("tax_settings.issqn_taxation", "ISSQN_TAXATION_REQUIRED", "Informe a tributação do ISSQN."))

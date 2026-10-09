@@ -11,6 +11,7 @@ Para versao="1.01" o perfil foi confirmado por DPS aceitas pela Sefin (ver CONFI
 from __future__ import annotations
 
 import base64
+import copy
 import hashlib
 from collections.abc import Callable
 
@@ -42,7 +43,14 @@ def _parser() -> etree.XMLParser:
 
 
 def _c14n(el: etree._Element) -> bytes:
-    return etree.tostring(el, method="c14n", exclusive=False, with_comments=False)
+    """C14N 1.0 inclusiva do elemento (subconjunto do documento), com os namespaces herdados.
+
+    A c14n do libxml2 aplicada a um sub-elemento NO LUGAR emite `xmlns=""` espúrios em descendentes quando há
+    namespace padrão herdado (ex.: <CNPJ xmlns="">), o que muda o digest e a assinatura. A Sefin (.NET SignedXml)
+    canoniza corretamente e rejeitava a DPS com E0714 (Produção Restrita, 09/10/2026). A cópia do elemento como raiz
+    de um documento próprio leva os namespaces em escopo como declarações e produz exatamente a forma canônica
+    esperada (conferido byte a byte com System.Security.Cryptography.Xml.XmlDsigC14NTransform)."""
+    return etree.tostring(copy.deepcopy(el), method="c14n", exclusive=False, with_comments=False)
 
 
 def _signed_target(root: etree._Element) -> etree._Element:

@@ -115,7 +115,7 @@ def patch(stack, cid: str, h, d: dict, **campos) -> dict:  # noqa: ANN001, ANN00
 
 
 def test_referencia_le_xml_oficial_preserva_particularidades_e_descarta_identidade(stack, world):
-    xml = nota(world["a_cnpj"], 501, extras="<obra><cObra>CNO000123</cObra></obra><infoCompl><xPed>PED-77</xPed>"
+    xml = nota(world["a_cnpj"], 501, extras="<obra><cObra>900012345678</cObra></obra><infoCompl><xPed>PED-77</xPed>"
                                            "</infoCompl>",
                valores_extra="<vDescCondIncond><vDescIncond>100.00</vDescIncond></vDescCondIncond>",
                trib_mun="<tribISSQN>1</tribISSQN><tpRetISSQN>2</tpRetISSQN><pAliq>3.00</pAliq>",
@@ -134,7 +134,7 @@ def test_referencia_le_xml_oficial_preserva_particularidades_e_descarta_identida
     assert d["status"] == "DRAFT" and d["competence"] == "2026-10" and d["service_date"] is None
     s, t = d["service"], d["tax_settings"]
     assert (s["national_code"], s["nbs_code"], s["location_code"], s["obra_code"]) == ("071601", "101032000", MUN,
-                                                                                      "CNO000123")
+                                                                                      "900012345678")
     assert s["additional_info"] is None  # infoCompl (pedido) é da nota de origem
     assert d["amount"] == "15000.00" and d["unconditional_discount"] == "100.00"
     assert t["issqn_taxation"] == "TAXABLE" and t["iss_retention"] == "RETAINED_BY_TOMADOR" and t["iss_rate"] == "3.00"
@@ -165,6 +165,33 @@ def test_referencia_le_xml_oficial_preserva_particularidades_e_descarta_identida
     # Nota original intacta.
     assert stack.fiscal.get(f"{F}/{world['a']}/documents/{o['document']['id']}",
                             headers=world["ha"]).json()["number"] == "501"
+
+
+def test_cobra_invalido_e_tributos_aproximados_duvidosos_viram_pendencias_sem_substituicao(stack, world):
+    """Nota de origem com cObra="0" e vTotTrib implausível (percentuais lançados como valor): nada é copiado nem
+    "corrigido"; cada um vira pendência bloqueante com o valor da origem e some quando o usuário informa o dado."""
+    a, h = world["a"], world["ha"]
+    importar(stack, a, h, nota(world["a_cnpj"], 551, ctn="070201", nbs="101021100", extras="<obra><cObra>0</cObra></obra>",
+                               tot="<vTotTrib><vTotTribFed>9.25</vTotTribFed><vTotTribEst>0.00</vTotTribEst>"
+                                   "<vTotTribMun>5.00</vTotTribMun></vTotTrib>"), "n551.xml")
+    d = referencia(stack, world, 551).json()
+    assert d["service"]["obra_code"] is None and d["tax_settings"]["approx_tax"] is None
+    pend = {p["code"]: p for p in d["origin"]["pending"]}
+    assert pend["REFERENCE_OBRA_ID_INVALID"]["severity"] == "error" and '"0"' in pend["REFERENCE_OBRA_ID_INVALID"]["message"]
+    assert pend["REFERENCE_APPROX_DOUBTFUL"]["severity"] == "error" and "9.25" in pend["REFERENCE_APPROX_DOUBTFUL"]["message"]
+    assert "service.obra_code" not in d["origin"]["fields"] and "tax_settings.approx_tax" not in d["origin"]["fields"]
+    v = validar(stack, a, h, d["id"])
+    assert v["REFERENCE_OBRA_ID_INVALID"]["severity"] == "error" and v["REFERENCE_APPROX_DOUBTFUL"]["severity"] == "error"
+    # Endereço da obra (alternativa do XSD) e tributos aproximados informados pelo usuário: as pendências somem.
+    d = patch(stack, a, h, d, service={"description": d["service"]["description"],
+                                       "obra_address": {"postal_code": "68515000", "street": "Rua Teste", "number": "S/N",
+                                                        "complement": "KM 12", "district": "Bairro Teste"}},
+              tax_settings={"approx_tax": {"mode": "PERCENT", "federal": "13.45", "state": "0.00", "municipal": "5.00"}})
+    v = validar(stack, a, h, d["id"])
+    assert not {"REFERENCE_OBRA_ID_INVALID", "REFERENCE_APPROX_DOUBTFUL"} & set(v)
+    # cObra digitado à mão fora do formato CNO/CEI: aviso (a Sefin aceita, mas não identifica a obra).
+    d = patch(stack, a, h, d, service={"description": d["service"]["description"], "obra_address": None, "obra_code": "0"})
+    assert validar(stack, a, h, d["id"])["OBRA_CODE_NOT_CNO"]["severity"] == "warning"
 
 
 def test_tratamentos_diferentes_viram_variantes_sem_sobrescrever_o_aprovado(stack, world):

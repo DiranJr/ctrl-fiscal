@@ -310,6 +310,39 @@ def test_emitir_agora_concorrente_com_agendamento_mysql(ostack, real, gov):
         assert len(s.scalars(select(BatchItem).where(BatchItem.draft_id == d["id"])).all()) == 1
 
 
+def test_relogio_adiantado_alinha_dhemi_ao_horario_da_sefin_e_desvio_grande_bloqueia(ostack, real, gov):
+    """Defeito real da Produção Restrita (09/10/2026): relógio local ~100 s adiantado → dhEmi posterior ao processamento
+    (E0008). O conector mede o desvio pelo Date da Sefin e emite pelo horário oficial; desvio > 5 min bloqueia."""
+    _producao(ostack, real)
+    gov.server_now = lambda: ostack.clock.now() - timedelta(seconds=100)
+    d = _rascunho(ostack, real, _perfil(ostack, real))
+    r = _emitir_agora(ostack, real, [d])
+    assert r.status_code == 202, r.text
+    ostack.worker().run_emissions()
+    it = batch_items(ostack, real, r.json()["batch_id"])[0]
+    assert it["status"] == "AUTHORIZED", it
+    inf = etree.fromstring(gov.posted_dps[-1]).find(f"{NS}infDPS")
+    from datetime import datetime
+
+    dh = datetime.fromisoformat(inf.findtext(f"{NS}dhEmi"))
+    assert dh <= ostack.clock.now() - timedelta(seconds=100)  # horário da Sefin, não o local adiantado
+    assert [c for c in gov.calls if c[1] == "HEAD"]
+    # Desvio grande (10 min): nada é transmitido; o item fica bloqueado com motivo claro.
+    from nfse_api.providers import official as of
+
+    gov.server_now = lambda: ostack.clock.now() - timedelta(minutes=10)
+    for prov in ostack.nfse_app.state.providers.values():
+        if hasattr(prov, "_relogio"):
+            del prov._relogio
+    d2 = _rascunho(ostack, real, _perfil(ostack, real), "200.00")
+    antes = _sefin_posts(gov)
+    r2 = _emitir_agora(ostack, real, [d2])
+    ostack.worker().run_emissions()
+    it2 = batch_items(ostack, real, r2.json()["batch_id"])[0]
+    assert it2["last_error"]["code"] == "CLOCK_SKEW" and it2["status"] == "SCHEDULED", it2
+    assert _sefin_posts(gov) == antes and of.RELOGIO_DESVIO_MAXIMO.total_seconds() == 300
+
+
 def test_contexto_alterado_depois_do_agendamento_nao_transmite(ostack, real, gov):
     """Entre o agendamento (dia 01 do mês seguinte, por exemplo) e a transmissão o contexto pode mudar: o worker confere
     de novo workspace, ambiente e perfil (mesma versão aprovada) e nada é enviado se divergir."""

@@ -21,7 +21,7 @@ import json
 import logging
 import ssl
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from cryptography.hazmat.primitives import serialization
 from defusedxml import ElementTree as SafeET
@@ -57,6 +57,10 @@ CONTRACT_CONFIRMED = True
 UNCONFIRMED_CONTRACT: list[str] = []
 NS = "{http://www.sped.fazenda.gov.br/nfse}"
 READ_ONLY_PRODUCTION_OPERATIONS = ("distribution", "parametros")
+# Relógio: dhEmi/dhEvento pelo horário da Sefin (E0008). Desvio acima do máximo bloqueia a emissão.
+RELOGIO_MARGEM = timedelta(seconds=2)
+RELOGIO_VALIDADE = timedelta(minutes=10)
+RELOGIO_DESVIO_MAXIMO = timedelta(minutes=5)
 
 
 def contract_confirmed() -> bool:
@@ -215,6 +219,39 @@ class OfficialProvider:
                 row.checks = updated
         return updated
 
+    def _agora_oficial(self, company: CompanyContext) -> datetime:
+        """Instante para dhEmi/dhEvento alinhado ao relógio da Sefin. A data de emissão não pode ser posterior à do
+        processamento (Anexo I, E0008): com o relógio local adiantado, a DPS seria rejeitada. O desvio é medido pelo
+        cabeçalho Date da própria Sefin (HEAD, sem dados) e guardado por alguns minutos; desvio grande bloqueia."""
+        agora = self.clock.now()
+        cache = getattr(self, "_relogio", None)
+        if cache is None or agora - cache[0] > RELOGIO_VALIDADE:
+            desvio = None
+            try:
+                t0 = self.clock.now()
+                r = self._transport(company, "sefin").request("HEAD", "/nfse", idempotent=True)  # sem redirecionamento
+                t1 = self.clock.now()
+                if r.server_date is not None:
+                    desvio = (t0 + (t1 - t0) / 2) - r.server_date  # local − Sefin (Date tem resolução de 1 s)
+            except TransportError:
+                desvio = None
+            if desvio is not None:
+                self._relogio = cache = (agora, desvio)
+            else:
+                cache = (agora, None)
+        desvio = cache[1]
+        if desvio is None:
+            return agora - RELOGIO_MARGEM
+        if abs(desvio) > RELOGIO_DESVIO_MAXIMO:
+            raise ProviderBlocked("BLOCKED", "CLOCK_SKEW",
+                                  f"O relógio deste servidor está {int(desvio.total_seconds())} s diferente do relógio da "
+                                  "Sefin: sincronize a hora (NTP) antes de emitir. Nada foi transmitido.")
+        if desvio > timedelta(seconds=1):
+            logging.getLogger("ctrl.nfse.relogio").warning(
+                "relogio local adiantado %.1f s em relacao a Sefin (%s): dhEmi alinhado ao horario oficial",
+                desvio.total_seconds(), self.environment)
+        return agora - max(desvio, timedelta(0)) - RELOGIO_MARGEM
+
     def check_ready(self, company: CompanyContext, operation: str) -> None:
         status, problems = self.blockers(company, operation)
         if status != "READY":
@@ -262,7 +299,7 @@ class OfficialProvider:
             return SubmitOutcome(state="REJECTED", errors=regra_paliq)  # nada transmitido
         try:
             montada = dps_mod.montar(payload, environment=self.environment, serie=dps["series"], numero=int(dps["number"]),
-                                     agora=self.clock.now())
+                                     agora=self._agora_oficial(company))
         except dps_mod.DpsIncompleta as exc:
             return SubmitOutcome(state="REJECTED", errors=[{"code": f"LOCAL_{f['codigo']}", "message": f"{f['campo']}: {f['mensagem']}"}
                                                            for f in exc.faltas])
@@ -323,7 +360,7 @@ class OfficialProvider:
         self.check_ready(company, "event")
         try:
             ped = ev_mod.montar(environment=self.environment, access_key=access_key, cnpj_autor=company.cnpj,
-                                codigo=code, c_motivo=c_motivo, x_motivo=x_motivo, agora=self.clock.now())
+                                codigo=code, c_motivo=c_motivo, x_motivo=x_motivo, agora=self._agora_oficial(company))
         except ev_mod.EventoInvalido as exc:
             return EventOutcome(state="REJECTED", errors=[{"code": "LOCAL_EVENTO", "message": m} for m in exc.erros])
         _, key, cert, _ = self._material(company)

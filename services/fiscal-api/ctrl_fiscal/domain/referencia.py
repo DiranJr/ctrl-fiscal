@@ -48,10 +48,26 @@ def _dec2(v: str | None) -> str | None:
         return None
 
 
+OBRA_CAMPOS = ("service.obra_code", "service.obra_address", "service.obra_cib", "service.obra_property_registration")
+# Tributos aproximados POR VALOR abaixo desta fração do valor do serviço são implausíveis (ex.: percentuais lançados
+# como valor) e não são reaproveitados: viram pendência com os valores da nota de origem.
+APROX_FRACAO_MINIMA = Decimal("0.001")
+
+
+def cno_cei_valido(v: str | None) -> bool:
+    """CNO e CEI: 12 dígitos (com ou sem máscara), não todos zero."""
+    d = "".join(ch for ch in (v or "") if ch.isdigit())
+    return len(d) == 12 and d.strip("0") != "" and all(ch.isdigit() or ch in ".-/ " for ch in (v or ""))
+
+
 def _pend(field: str, code: str, message: str, severity: str = "warning", *, enquanto_vazio: bool = True,
-          tag: str | None = None) -> dict:
-    return {"field": field, "code": code, "message": message, "severity": severity, "while_empty": enquanto_vazio,
-            "tag": tag}
+          tag: str | None = None, vazio_em: tuple[str, ...] | None = None) -> dict:
+    """vazio_em: a pendência some quando QUALQUER um desses campos do rascunho for preenchido."""
+    out = {"field": field, "code": code, "message": message, "severity": severity, "while_empty": enquanto_vazio,
+           "tag": tag}
+    if vazio_em:
+        out["while_empty_any"] = list(vazio_em)
+    return out
 
 
 def ler_referencia(xml: bytes, company_cnpj: str, competencia_nova: str) -> dict:
@@ -118,6 +134,14 @@ def ler_referencia(xml: bytes, company_cnpj: str, competencia_nova: str) -> dict
         loc = None
     extra = nx.servico_extra(serv) or {}
     obra_code = nx._text(serv, "obra", "cObra")
+    if obra_code is not None and not cno_cei_valido(obra_code):
+        # O leiaute só exige 1 a 30 caracteres (a Sefin aceita "0"), mas cObra identifica a obra no CNO/CEI (XSD
+        # TCInfoObra): valor que não é CNO/CEI não é copiado e vira pendência — nunca é trocado por outro.
+        pend.append(_pend("service.obra", "REFERENCE_OBRA_ID_INVALID",
+                          f"cObra \"{obra_code}\" da nota de origem não identifica uma obra (CNO/CEI tem 12 dígitos): "
+                          "informe o CNO, o endereço da obra, a inscrição imobiliária ou o CIB (grupo obra, E0370).",
+                          "error", tag="serv/obra/cObra", vazio_em=OBRA_CAMPOS))
+        obra_code = None
     service = {
         "national_code": copia("service.national_code", "serv/cServ/cTribNac", ctn),
         "municipal_code": copia("service.municipal_code", "serv/cServ/cTribMun", ctm),
@@ -191,6 +215,18 @@ def ler_referencia(xml: bytes, company_cnpj: str, competencia_nova: str) -> dict
         approx = {"mode": "SIMPLES_PERCENT", "simples": _dec2(nx._text(tot, "pTotTribSN"))}
     elif nx._text(tot, "indTotTrib"):
         approx = {"mode": "NOT_INFORMED"}
+    if approx and approx["mode"] == "VALUES":
+        soma = sum(Decimal(approx.get(k) or "0") for k in ("federal", "state", "municipal"))
+        base = Decimal(amount or "0")
+        if base > 0 and soma / base < APROX_FRACAO_MINIMA:
+            # Implausível para o valor da nota (Lei 12.741: carga aproximada): não é copiado nem "corrigido".
+            pend.append(_pend("tax_settings.approx_tax", "REFERENCE_APPROX_DOUBTFUL",
+                              f"Tributos aproximados da nota de origem por VALOR (vTotTrib: federal "
+                              f"{approx.get('federal')}, estadual {approx.get('state')}, municipal "
+                              f"{approx.get('municipal')}) somam {(soma / base * 100).quantize(Decimal('0.0001'))}% do "
+                              "valor do serviço — parecem percentuais lançados como valor. Não copiados: informe a "
+                              "modalidade e os valores corretos (Lei 12.741/2012).", "error", tag="trib/totTrib/vTotTrib"))
+            approx = None
     tax["approx_tax"] = copia("tax_settings.approx_tax", "trib/totTrib", approx)
     if approx and approx["mode"] == "VALUES":
         pend.append(_pend("tax_settings.approx_tax", "REFERENCE_REVIEW_VALUES", "Tributos aproximados copiados em "
@@ -307,7 +343,10 @@ def pendencias_atuais(d) -> list[dict]:  # noqa: ANN001
         return []
     out = []
     for p in origem.get("pending") or []:
-        if p.get("while_empty") and valor_campo(d, p["field"]) not in (None, "", {}, []):
+        if p.get("while_empty_any"):
+            if any(valor_campo(d, f) not in (None, "", {}, []) for f in p["while_empty_any"]):
+                continue
+        elif p.get("while_empty") and valor_campo(d, p["field"]) not in (None, "", {}, []):
             continue
         out.append({"field": p["field"], "code": p["code"], "message": p["message"], "severity": p["severity"],
                     **({"rule": p["tag"]} if p.get("tag") else {})})

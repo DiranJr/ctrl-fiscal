@@ -14,6 +14,8 @@ import ssl
 import tempfile
 import time
 from dataclasses import dataclass
+from datetime import datetime
+from email.utils import parsedate_to_datetime
 from urllib.parse import urlsplit
 
 import logging
@@ -70,11 +72,20 @@ class ContractNotConfirmed(Exception):
     pass
 
 
+def _data_servidor(valor: str | None) -> datetime | None:
+    try:
+        return parsedate_to_datetime(valor) if valor else None
+    except (TypeError, ValueError):
+        return None
+
+
 @dataclass
 class TransportResponse:
     status: int
     body: bytes
     content_type: str
+    # Cabeçalho Date do servidor oficial (resolução de 1 s): referência de horário para dhEmi/dhEvento.
+    server_date: "datetime | None" = None
 
 
 def build_ssl_context(cert_pem: bytes | None, key_pem: bytes | None) -> ssl.SSLContext:
@@ -163,7 +174,8 @@ class OfficialTransport:
                     if r.status_code >= 500 and idempotent and attempt + 1 < attempts:
                         time.sleep(min(8.0, 0.5 * 2 ** attempt))
                         continue
-                    return TransportResponse(r.status_code, b"".join(chunks), r.headers.get("content-type", ""))
+                    return TransportResponse(r.status_code, b"".join(chunks), r.headers.get("content-type", ""),
+                                             _data_servidor(r.headers.get("date")))
             except httpx.ConnectError as exc:
                 # Falha antes de enviar o pedido: seguro afirmar que não foi processado.
                 if idempotent and attempt + 1 < attempts:

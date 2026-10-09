@@ -6,7 +6,7 @@ de produção estão desligadas no temporário) e nada no operacional (cópia re
 
 Fases (uma por execução, para conferência entre elas):
   (variáveis: PR_EMPRESA = id do workspace; PR_SAIDA = pasta de trabalho fora do repositório)
-  rascunho <document_id>  série exclusiva do teste NA CÓPIA, rascunho pela referência, R$ 1,00 com recálculo dos
+  rascunho <document_id> <cenario.json>  série exclusiva do teste NA CÓPIA, rascunho pela referência, R$ 1,00 com recálculo dos
                           valores dependentes, configuração da operação registrada e aprovada NA CÓPIA, validação
   conferir-id             DPS Id que será usado e consulta oficial (GET /dps/{id}) — precisa NÃO existir
   emitir                  “Emitir agora” (Produção Restrita) + clique repetido + pedido duplicado; acompanha o resultado
@@ -97,7 +97,10 @@ def _dec(v: str | None) -> Decimal:
     return Decimal(v or "0")
 
 
-def fase_rascunho(c: httpx.Client, document_id: str) -> None:
+def fase_rascunho(c: httpx.Client, document_id: str, cenario_arq: str) -> None:
+    """Rascunho pela referência + CENÁRIO DE TESTE declarado (arquivo JSON, mostrado antes de qualquer transmissão).
+    O cenário é técnico: valida o fluxo na Produção Restrita; NÃO é a aprovação fiscal da operação real da empresa."""
+    cen = json.loads(Path(cenario_arq).read_text(encoding="utf-8"))
     print(compose_exec("core-api", (
         "from sqlalchemy.orm import Session\nfrom core_api.settings import CoreSettings\n"
         "from core_api.models import Company\nfrom ctrl_common.db import make_engine\n"
@@ -119,56 +122,32 @@ def fase_rascunho(c: httpx.Client, document_id: str) -> None:
             "address": {k: a.get(k) for k in ("street", "number", "complement", "district")} if any(a.values()) else None})
         if cr.status_code != 201:
             raise SystemExit(f"cadastro do tomador na cópia: {cr.status_code} {cr.text[:300]}")
-        print("tomador cadastrado NA CÓPIA a partir do XML oficial (faltando no XML:", rec.get("missing"), ")")
+        print("tomador cadastrado NA CÓPIA a partir do XML oficial")
     r = c.post(f"{F}/drafts/from-document", headers={"Idempotency-Key": uuid.uuid4().hex},
                json={"source_document_id": document_id})
     if r.status_code != 201:
         raise SystemExit(f"from-document: {r.status_code} {r.text[:400]}")
     d = r.json()
     bruto("01-rascunho-referencia", d)
-    print("origem:", d["origin"]["kind"], "| pendências da referência:",
-          [(p["field"], p["code"], p["severity"]) for p in d["origin"]["pending"]])
-    print("operação:", d["origin"]["operation"].get("resolution"), d["origin"]["operation"].get("profile_status"))
-    # R$ 1,00: valores DEPENDENTES recalculados pela mesma proporção da nota de origem; nada em reais é copiado.
-    orig = _dec(doc["amount"])
-    novo = Decimal("1.00")
-    ts = d["tax_settings"]
-    patch_ts: dict = {}
-    recalc: dict = {}
-    for k in ("inss_withheld", "irrf_withheld", "csll_withheld", "pis_cofins_base", "pis_amount", "cofins_amount"):
-        if ts.get(k):
-            v = (_dec(ts[k]) * novo / orig).quantize(Decimal("0.01"), ROUND_HALF_UP)
-            patch_ts[k] = f"{v}" if v > 0 else None
-            recalc[k] = {"origem": ts[k], "proporcao": f"{(_dec(ts[k]) / orig * 100).quantize(Decimal('0.0001'))}%",
-                         "novo": patch_ts[k]}
-    ap = ts.get("approx_tax") or {}
-    if ap.get("mode") == "VALUES":
-        novo_ap = {"mode": "VALUES"}
-        for k in ("federal", "state", "municipal"):
-            novo_ap[k] = f"{(_dec(ap.get(k)) * novo / orig).quantize(Decimal('0.01'), ROUND_HALF_UP)}"
-        patch_ts["approx_tax"] = novo_ap
-        recalc["approx_tax"] = {"origem": ap, "novo": novo_ap}
-    desc = "TESTE PRODUCAO RESTRITA - SEM VALOR FISCAL. " + (d["service"]["description"] or "")
-    hoje = datetime.now().strftime("%Y-%m-%d")
-    r = c.patch(f"{F}/drafts/{d['id']}", json={
-        "expected_version": d["version"], "amount": "1.00", "service_date": hoje,
-        "service": {"description": desc[:2000]}, "tax_settings": patch_ts})
+    print("pendências do reaproveitamento:", [(p["field"], p["code"], p["severity"]) for p in d["origin"]["pending"]])
+    # Cenário de TESTE aplicado explicitamente (cada valor está no arquivo do cenário; nada vem "corrigido" da origem).
+    r = c.patch(f"{F}/drafts/{d['id']}", json={"expected_version": d["version"], **cen["rascunho"]})
     if r.status_code != 200:
-        raise SystemExit(f"patch: {r.status_code} {r.text[:400]}")
+        raise SystemExit(f"cenário: {r.status_code} {r.text[:500]}")
     d = r.json()
-    print("recálculo (R$ 1,00):", json.dumps(recalc, ensure_ascii=False))
-    # Configuração da operação: registrada a partir do rascunho e aprovada NA CÓPIA (autorização do Junior para o teste).
     d = c.post(f"{F}/drafts/{d['id']}/operation-config", json={"expected_version": d["version"]}).json()
     op_ = d["origin"]["operation"]
     perfis = {p["id"]: p for p in c.get(f"{C}/service-profiles").json()}
     p = perfis.get(op_.get("profile_id") or "")
-    print("configuração:", op_.get("resolution"), p and p["status"], p and [(i["code"], i["severity"]) for i in p["pending"]])
+    print("configuração do cenário:", op_.get("resolution"), p and p["status"],
+          p and [(i["code"], i["severity"]) for i in p["pending"] if i["severity"] != "info"])
     if p and p["status"] == "PENDING_REVIEW":
         if not p["can_approve"]:
-            raise SystemExit("configuração com pendência bloqueante: " + json.dumps(p["pending"], ensure_ascii=False))
+            raise SystemExit("cenário com pendência bloqueante: " + json.dumps(p["pending"], ensure_ascii=False))
         a = c.post(f"{C}/service-profiles/{p['id']}/approve", json={
             "expected_version": p["version"], "valid_from": "2026-10-01",
-            "note": "Aprovada SOMENTE no ambiente temporário de Produção Restrita, por autorização do Junior (09/10/2026)."})
+            "note": "CENÁRIO DE TESTE da Produção Restrita, aprovado SOMENTE no ambiente temporário. "
+                    "Não é a aprovação fiscal da operação real."})
         a.raise_for_status()
         d = c.post(f"{F}/drafts/{d['id']}/operation-config", json={"expected_version": d["version"]}).json()
     v = c.post(f"{F}/drafts/{d['id']}/validate").json()
@@ -176,8 +155,8 @@ def fase_rascunho(c: httpx.Client, document_id: str) -> None:
     d = c.get(f"{F}/drafts/{d['id']}").json()
     bruto("03-rascunho-final", d)
     print("validação:", "VÁLIDO" if v["valid"] else "COM ERROS", [(i["code"], i["severity"]) for i in v["issues"]])
-    salvar(draft_id=d["id"], draft_version=d["version"], referencia={"id": document_id, "numero": doc["number"],
-                                                                      "emitida_em": doc["issued_at"]}, recalculo=recalc)
+    salvar(draft_id=d["id"], draft_version=d["version"], valido=v["valid"],
+           referencia={"id": document_id, "numero": doc["number"], "emitida_em": doc["issued_at"]})
 
 
 def fase_conferir_id() -> None:
@@ -213,6 +192,8 @@ def fase_emitir(c: httpx.Client) -> None:
     st = estado()
     if not st.get("dps_id_livre"):
         raise SystemExit("DPS Id não conferido como livre na Produção Restrita: não transmitir")
+    if not st.get("valido"):
+        raise SystemExit("rascunho do cenário não está válido: não transmitir")
     d = c.get(f"{F}/drafts/{st['draft_id']}").json()
     body = {"drafts": [{"id": d["id"], "expected_version": d["version"]}], "mode": "NOW", "timezone": "America/Sao_Paulo"}
     key = uuid.uuid4().hex
@@ -317,8 +298,8 @@ def fase_auditoria(c: httpx.Client) -> None:
         "from ctrl_fiscal.settings import FiscalSettings\nfrom ctrl_fiscal.models import AuditEvent\n"
         "from ctrl_common.db import make_engine\n"
         "with Session(make_engine(FiscalSettings.from_env('fiscal-api').database_url)) as s:\n"
-        "    rows = s.scalars(select(AuditEvent).order_by(AuditEvent.created_at.desc()).limit(40)).all()\n"
-        "    print(json.dumps([[r.action, r.target_type, str(r.created_at)] for r in rows]))\n"))
+        "    rows = s.scalars(select(AuditEvent).order_by(AuditEvent.occurred_at.desc()).limit(40)).all()\n"
+        "    print(json.dumps([[r.action, r.target_type, str(r.occurred_at)] for r in rows]))\n"))
     acoes = json.loads(out)
     bruto("15-auditoria", acoes)
     print("auditoria (mais recentes):", [a[0] for a in acoes[:20]])
