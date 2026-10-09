@@ -54,6 +54,7 @@ import {
   ServiceProfile,
   ServiceProfileInput,
   ServiceProfilePatch,
+  ProposalResolveRequest,
   CertificateStatus,
   ServiceProfileVersionOut,
   PrepareProfilesResult,
@@ -87,6 +88,7 @@ export interface ICoreApiClient {
   approveServiceProfile(companyId: string, profileId: string, expectedVersion: number, validFrom?: string | null, note?: string | null): Promise<ServiceProfile>;
   setServiceProfileActive(companyId: string, profileId: string, active: boolean, expectedVersion: number): Promise<ServiceProfile>;
   getServiceProfileVersions(companyId: string, profileId: string): Promise<ServiceProfileVersionOut[]>;
+  resolveServiceProfileProposal(companyId: string, profileId: string, proposalId: string, req: ProposalResolveRequest): Promise<ServiceProfile>;
   // Administração de usuários
   getAdminMeta(): Promise<AdminMeta>;
   getAdminCompanies(): Promise<AdminCompany[]>;
@@ -505,6 +507,12 @@ export class HttpCoreApiClient implements ICoreApiClient {
 
   async getServiceProfileVersions(companyId: string, profileId: string): Promise<ServiceProfileVersionOut[]> {
     return this.request<ServiceProfileVersionOut[]>(`/companies/${companyId}/service-profiles/${profileId}/versions`);
+  }
+
+  async resolveServiceProfileProposal(companyId: string, profileId: string, proposalId: string, req: ProposalResolveRequest): Promise<ServiceProfile> {
+    return this.request<ServiceProfile>(`/companies/${companyId}/service-profiles/${profileId}/proposals/${proposalId}/resolve`, {
+      method: 'POST', body: JSON.stringify(req),
+    });
   }
 
   async getReadiness(companyId: string): Promise<Readiness> {

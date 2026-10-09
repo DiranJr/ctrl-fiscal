@@ -37,7 +37,18 @@ ROTULOS = {"name": "Nome do perfil", "national_code": "Código de tributação n
            "pis_cofins_cst": "CST do PIS/COFINS", "ibs_cbs": "Classificação IBS/CBS",
            "ibs_cbs.operation_indicator": "Indicador da operação (cIndOp)",
            "ibs_cbs.class_code": "Classificação tributária (cClassTrib)", "ibs_cbs.cst": "CST do IBS/CBS",
-           "ibs_cbs.regular": "Tributação regular (gTribRegular)", "valid_from": "Início da vigência"}
+           "ibs_cbs.regular": "Tributação regular (gTribRegular)", "valid_from": "Início da vigência",
+           "proposta": "Proposta de revisão"}
+# Proposta de revisão (em `suggestions`): análise das notas e das tabelas com alternativas CONDICIONAIS. Não altera
+# nenhum campo do perfil; enquanto ABERTA bloqueia a aprovação. Só uma pessoa autorizada a resolve: APLICADA (os
+# campos da alternativa escolhida passam ao perfil, que continua pendente de revisão) ou DESCARTADA.
+PROPOSTA = "proposta_revisao"
+PROPOSTA_STATUS = ("ABERTA", "APLICADA", "DESCARTADA")
+
+
+def propostas(p: ServiceProfile, status: str | None = None) -> list[dict]:
+    return [x for x in (p.suggestions or []) if isinstance(x, dict) and x.get("tipo") == PROPOSTA
+            and (status is None or x.get("status") == status)]
 
 
 @lru_cache(maxsize=1)
@@ -168,6 +179,12 @@ def pendencias(p: ServiceProfile, company: Company | None, hoje: date) -> list[d
                               "Valor de nota anterior (evidência histórica): confirme se vale para novas operações."
                               if src["origem"] == "xml_historico" else
                               "Sugestão baseada em tabela oficial: confirme.", "warning"))
+    for prop in propostas(p, "ABERTA"):
+        perguntas = ", ".join(q["id"] for q in prop.get("perguntas") or [])
+        out.append(_issue("proposta", "PROPOSTA_EM_ABERTO",
+                          f"Proposta de revisão {prop['id']} em aberto"
+                          + (f" (perguntas {perguntas})" if perguntas else "")
+                          + ": aplique uma alternativa confirmada ou descarte a proposta antes de aprovar."))
     if p.valid_from and p.valid_to and p.valid_to < p.valid_from:
         out.append(_issue("valid_to", "VIGENCIA", "Fim da vigência anterior ao início."))
     return out

@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Badge, Button, Input, Modal, Select, Textarea } from '@ctrl-fiscal/ui';
 import {
-  FieldSource, ProblemDetailsException, ProfileEvidence, ServiceProfile, ServiceProfileInput, ServiceProfileVersionOut,
-  TaxClassification,
+  FieldSource, ProblemDetailsException, ProfileEvidence, ProfileProposal, ProfileSuggestion, ServiceProfile,
+  ServiceProfileInput, ServiceProfileVersionOut, TaxClassification,
 } from '@ctrl-fiscal/api-client';
 import { useFiscal, logSafe } from '../../context/FiscalContext.js';
 import { ScreenSection, TableEmpty } from '../screen/ScreenSection.js';
@@ -25,6 +25,84 @@ const ACOES: Record<string, string> = {
   prepared: 'Preparado das notas', created: 'Criado', updated: 'Editado', approved: 'Aprovado', inactivated: 'Inativado',
   reactivated: 'Reativado (volta à revisão)', migrated: 'Migrado',
   variant_prepared: 'Variante registrada a partir de um rascunho',
+  proposal_registered: 'Proposta de revisão registrada (campos não alterados)',
+  proposal_applied: 'Alternativa da proposta aplicada (continua pendente de revisão)',
+  proposal_discarded: 'Proposta de revisão descartada',
+};
+const ehProposta = (s: ProfileSuggestion | ProfileProposal): s is ProfileProposal => s.tipo === 'proposta_revisao';
+const PROPOSTA_STATUS: Record<string, { label: string; badge: string }> = {
+  ABERTA: { label: 'Em aberto', badge: 'PROCESSING' },
+  APLICADA: { label: 'Aplicada', badge: 'VALID' },
+  DESCARTADA: { label: 'Descartada', badge: 'WITHDRAWN' },
+};
+/** Seções da análise registrada com a proposta (análise das notas e das tabelas oficiais). */
+const ANALISE: [string, string][] = [
+  ['servico', 'Serviço descrito nas notas'], ['variacoes', 'Variações encontradas'],
+  ['codigos', 'cTribNac e NBS atuais'], ['incompatibilidades', 'Incompatibilidades'],
+  ['historico', 'Dados históricos das notas (não confirmados)'], ['confirmado', 'Configuração confirmada'],
+  ['obra', 'Obra ou imóvel'], ['por_emissao', 'Dados próprios de cada emissão (não entram no perfil)'],
+  ['pendencias', 'Pendências'],
+];
+const fmtCampos = (c: ProfileProposal['alternativas'][number]['campos']) => [
+  c.national_code && `cTribNac ${c.national_code}`, c.nbs_code && `NBS ${c.nbs_code}`,
+  c.issqn_taxation && `ISSQN ${ISSQN[c.issqn_taxation] || c.issqn_taxation}`,
+  c.pis_cofins_cst && `CST PIS/COFINS ${c.pis_cofins_cst}`,
+  c.ibs_cbs && `cIndOp ${c.ibs_cbs.operation_indicator} · CST ${c.ibs_cbs.cst} · cClassTrib ${c.ibs_cbs.class_code}`,
+].filter(Boolean).join(' · ');
+
+const PropostaRevisao: React.FC<{
+  prop: ProfileProposal; canEdit: boolean; onResolve: (prop: ProfileProposal, decision: 'APPLY' | 'DISCARD', alt?: string) => void;
+}> = ({ prop, canEdit, onResolve }) => {
+  const st = PROPOSTA_STATUS[prop.status] || { label: prop.status, badge: 'PROCESSING' };
+  const aberta = prop.status === 'ABERTA';
+  const lista = (v: unknown) => (Array.isArray(v) ? v : v ? [v] : []) as string[];
+  return (
+    <div className="pf-perfil-pend" data-severity={aberta ? 'warning' : 'info'}>
+      <div><strong>Proposta de revisão {prop.id}</strong> <Badge status={st.badge} customLabel={st.label} size="sm" />
+        {prop.alternativa_aplicada && <span className="pf-help"> · alternativa {prop.alternativa_aplicada}</span>}</div>
+      <p>{prop.resumo}</p>
+      {prop.alternativas.length === 0 ? (
+        <p className="pf-help">Nenhuma alternativa de classificação registrada: o enquadramento depende das respostas abaixo e não é presumido.</p>
+      ) : (
+        <ol className="pf-bullets">
+          {prop.alternativas.map((a) => (
+            <li key={a.id}>
+              <strong>{a.id}. {a.rotulo}</strong> — {fmtCampos(a.campos)}
+              <div className="pf-help">Condição: {a.condicao}</div>
+              <div className="pf-help">Fundamento: {a.fundamento.join('; ')}</div>
+              {canEdit && aberta && (
+                <Button variant="outline" size="sm" onClick={() => onResolve(prop, 'APPLY', a.id)}>Aplicar alternativa {a.id}</Button>
+              )}
+            </li>
+          ))}
+        </ol>
+      )}
+      {prop.perguntas.length > 0 && (
+        <>
+          <strong>Perguntas a responder</strong>
+          <ul className="pf-bullets">
+            {prop.perguntas.map((q) => <li key={q.id}><strong>{q.id}</strong> ({q.responsavel}): {q.texto}</li>)}
+          </ul>
+        </>
+      )}
+      <details className="pf-perfil-info">
+        <summary>Análise das notas e tabelas</summary>
+        {ANALISE.filter(([k]) => prop.analise?.[k]).map(([k, label]) => (
+          <div key={k}>
+            <strong>{label}</strong>
+            <ul className="pf-bullets">{lista(prop.analise[k]).map((x, i) => <li key={i}>{x}</li>)}</ul>
+          </div>
+        ))}
+      </details>
+      <div className="pf-help">Próxima ação: {prop.proxima_acao}</div>
+      {prop.nota && <div className="pf-help">Resolução: {prop.nota}</div>}
+      {canEdit && aberta && (
+        <div className="pf-actions-end">
+          <Button variant="ghost" size="sm" onClick={() => onResolve(prop, 'DISCARD')}>Descartar proposta</Button>
+        </div>
+      )}
+    </div>
+  );
 };
 
 export const OrigemTag: React.FC<{ src?: FieldSource }> = ({ src }) => {
@@ -163,6 +241,10 @@ export const ServiceProfilesSection: React.FC = () => {
   const [approveChecked, setApproveChecked] = useState(false);
   const [approveErr, setApproveErr] = useState<string[]>([]);
   const [history, setHistory] = useState<{ p: ServiceProfile; rows: ServiceProfileVersionOut[] } | null>(null);
+  const [resolving, setResolving] = useState<{ p: ServiceProfile; prop: ProfileProposal; decision: 'APPLY' | 'DISCARD'; alt?: string } | null>(null);
+  const [resolveNote, setResolveNote] = useState('');
+  const [resolveChecked, setResolveChecked] = useState(false);
+  const [resolveErr, setResolveErr] = useState<string[]>([]);
   const [filtro, setFiltro] = useState<'todos' | 'PENDING_REVIEW' | 'APPROVED' | 'INACTIVE'>('todos');
 
   const load = useCallback(async () => {
@@ -274,6 +356,32 @@ export const ServiceProfilesSection: React.FC = () => {
     } catch (err) {
       logSafe('perfil de serviço', err);
       showToast('Não foi possível alterar a situação do perfil (recarregue e tente de novo).', 'error');
+    }
+  };
+
+  const abrirResolucao = (p: ServiceProfile) => (prop: ProfileProposal, decision: 'APPLY' | 'DISCARD', alt?: string) => {
+    setResolving({ p, prop, decision, alt });
+    setResolveNote('');
+    setResolveChecked(false);
+    setResolveErr([]);
+  };
+
+  const resolver = async () => {
+    if (!currentCompany || !resolving) return;
+    const id = currentCompany.id;
+    try {
+      await clients.core.resolveServiceProfileProposal(id, resolving.p.id, resolving.prop.id, {
+        expected_version: resolving.p.version, decision: resolving.decision, alternative: resolving.alt ?? null, note: resolveNote.trim(),
+      });
+      if (currentCompany?.id !== id) return;
+      setResolving(null);
+      showToast(resolving.decision === 'APPLY' ? 'Alternativa aplicada. O perfil continua pendente de revisão.' : 'Proposta descartada.', 'success');
+      await load();
+    } catch (err) {
+      logSafe('resolver proposta', err);
+      const msgs = err instanceof ProblemDetailsException
+        ? Object.entries(err.formatFieldErrors()).map(([k, v]) => `${k}: ${v.join(' ')}`) : [];
+      setResolveErr(msgs.length ? msgs : [(err as Error)?.message || 'Não foi possível resolver a proposta.']);
     }
   };
 
@@ -395,12 +503,15 @@ export const ServiceProfilesSection: React.FC = () => {
                     <ul>{p.evidence.divergencias.map((x, k) => <li key={k}>{x.message}</li>)}</ul>
                   </div>
                 )}
-                {(infos.length > 0 || p.suggestions.length > 0) && (
+                {p.suggestions.filter(ehProposta).map((prop) => (
+                  <PropostaRevisao key={prop.id} prop={prop} canEdit={canEdit && p.status === 'PENDING_REVIEW'} onResolve={abrirResolucao(p)} />
+                ))}
+                {(infos.length > 0 || p.suggestions.some((s) => !ehProposta(s))) && (
                   <details className="pf-perfil-info">
-                    <summary>O que cada nota exigirá e sugestões ({infos.length + p.suggestions.length})</summary>
+                    <summary>O que cada nota exigirá e sugestões ({infos.length + p.suggestions.filter((s) => !ehProposta(s)).length})</summary>
                     <ul>
                       {infos.map((i, k) => <li key={`i${k}`}>{i.message} <span className="pf-help">({i.code})</span></li>)}
-                      {p.suggestions.map((s, k) => (
+                      {p.suggestions.filter((s): s is ProfileSuggestion => !ehProposta(s)).map((s, k) => (
                         <li key={`s${k}`}>
                           <span className={s.tipo === 'tabela_oficial' ? 'pf-origem pf-origem-tabela' : 'pf-origem pf-origem-xml'}>
                             {s.tipo === 'tabela_oficial' ? 'Tabela oficial' : 'XML oficial'}
@@ -534,6 +645,47 @@ export const ServiceProfilesSection: React.FC = () => {
               Conferi os códigos, a classificação IBS/CBS e as notas de referência deste perfil.
             </label>
             {approveErr.length > 0 && <Notice variant="error" title="Não aprovado"><ul className="pf-bullets">{approveErr.map((m, k) => <li key={k}>{m}</li>)}</ul></Notice>}
+          </div>
+        )}
+      </Modal>
+
+      <Modal isOpen={!!resolving} onClose={() => setResolving(null)} maxWidth="640px"
+        title={resolving ? (resolving.decision === 'APPLY' ? `Aplicar alternativa ${resolving.alt} da proposta ${resolving.prop.id}` : `Descartar proposta ${resolving.prop.id}`) : 'Proposta'}
+        description="Aplicar copia os códigos da alternativa para o perfil como dados informados por você; o perfil continua pendente de revisão e a aprovação é um passo separado."
+        footer={
+          <div className="pf-actions-end">
+            <Button variant="outline" onClick={() => setResolving(null)}>Cancelar</Button>
+            <Button variant="primary" disabled={!resolveChecked || resolveNote.trim().length < 5} onClick={resolver}>
+              {resolving?.decision === 'APPLY' ? 'Aplicar alternativa' : 'Descartar proposta'}
+            </Button>
+          </div>
+        }>
+        {resolving && (
+          <div className="pf-stack">
+            {resolving.decision === 'APPLY' && (() => {
+              const a = resolving.prop.alternativas.find((x) => x.id === resolving.alt);
+              return a ? (
+                <Notice variant="warning" title={`${a.id}. ${a.rotulo}`}>
+                  <div>{fmtCampos(a.campos)}</div>
+                  <div className="pf-help">Condição: {a.condicao}</div>
+                </Notice>
+              ) : null;
+            })()}
+            {resolving.prop.perguntas.length > 0 && (
+              <Notice variant="info" title="Perguntas desta proposta">
+                <ul className="pf-bullets">{resolving.prop.perguntas.map((q) => <li key={q.id}><strong>{q.id}</strong>: {q.texto}</li>)}</ul>
+              </Notice>
+            )}
+            <Textarea label={resolving.decision === 'APPLY' ? 'Confirmação recebida (contrato, contabilidade)' : 'Motivo do descarte'}
+              value={resolveNote} maxLength={1000} onChange={(e) => setResolveNote(e.target.value)}
+              helperText="Obrigatório (mínimo de 5 caracteres). Fica registrado no histórico e na auditoria." />
+            <label className="pf-check">
+              <input type="checkbox" checked={resolveChecked} onChange={(e) => setResolveChecked(e.target.checked)} />
+              {resolving.decision === 'APPLY'
+                ? 'A condição desta alternativa foi confirmada. Entendo que o perfil NÃO será aprovado por esta ação.'
+                : 'Esta proposta não se aplica a este serviço.'}
+            </label>
+            {resolveErr.length > 0 && <Notice variant="error" title="Não resolvida"><ul className="pf-bullets">{resolveErr.map((m, k) => <li key={k}>{m}</li>)}</ul></Notice>}
           </div>
         )}
       </Modal>

@@ -53,6 +53,7 @@ import {
   ServiceProfile,
   ServiceProfileInput,
   ServiceProfilePatch,
+  ProposalResolveRequest,
   CertificateStatus,
   ServiceProfileVersionOut,
   PrepareProfilesResult,
@@ -381,6 +382,17 @@ export class MockCoreApiClient implements ICoreApiClient {
 
   async getServiceProfileVersions(_companyId: string, _profileId: string): Promise<ServiceProfileVersionOut[]> {
     return [];
+  }
+
+  async resolveServiceProfileProposal(companyId: string, profileId: string, proposalId: string, req: ProposalResolveRequest): Promise<ServiceProfile> {
+    const p = (this.serviceProfiles.get(companyId) || []).find((x) => x.id === profileId);
+    if (!p) throw new Error('Perfil de serviço não encontrado.');
+    const suggestions = p.suggestions.map((s) => (s.tipo === 'proposta_revisao' && 'id' in s && s.id === proposalId
+      ? { ...s, status: req.decision === 'APPLY' ? 'APLICADA' : 'DESCARTADA', alternativa_aplicada: req.alternative ?? null, nota: req.note }
+      : s));
+    const updated = { ...p, suggestions, version: p.version + 1 };
+    this.serviceProfiles.set(companyId, (this.serviceProfiles.get(companyId) || []).map((x) => (x.id === profileId ? updated : x)));
+    return updated;
   }
 
   async getFiscalProfile(companyId: string): Promise<FiscalProfileOut> {

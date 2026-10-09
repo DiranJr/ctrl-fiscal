@@ -69,6 +69,24 @@ export interface VariantEvidence {
 }
 export interface ProfilePendency { field: string; label: string; code: string; message: string; severity: 'error' | 'warning' | 'info' | string }
 export interface ProfileSuggestion { campo: string; codigo: string; texto: string; fonte: string; tipo: 'tabela_oficial' | 'dados_xml' | string }
+/** Proposta de revisão: alternativas CONDICIONAIS; não altera o perfil e bloqueia a aprovação enquanto aberta. */
+export interface ProfileProposalAlternative {
+  id: string; rotulo: string; condicao: string; fundamento: string[];
+  campos: { national_code?: string | null; municipal_code?: string | null; nbs_code?: string | null; issqn_taxation?: string | null; pis_cofins_cst?: string | null; ibs_cbs?: ServiceProfileIbsCbs | null };
+}
+export interface ProfileProposal {
+  tipo: 'proposta_revisao';
+  id: string;
+  status: 'ABERTA' | 'APLICADA' | 'DESCARTADA' | string;
+  resumo: string;
+  alternativas: ProfileProposalAlternative[];
+  perguntas: { id: string; texto: string; responsavel: string }[];
+  proxima_acao: string;
+  analise: Record<string, any>;
+  registrada_em: string; registrada_por: string;
+  alternativa_aplicada?: string | null; resolvida_por?: string | null; resolvida_em?: string | null; nota?: string | null;
+}
+export interface ProposalResolveRequest { expected_version: number; decision: 'APPLY' | 'DISCARD'; alternative?: string | null; note: string }
 export interface InventoryVariant { valor?: string | null; notas: number; [k: string]: unknown }
 export interface ProfileEvidence {
   total_notas: number;
@@ -107,7 +125,7 @@ export interface ServiceProfile {
   origin_key: string | null;
   evidence: ProfileEvidence | VariantEvidence | null;
   field_sources: Record<string, FieldSource>;
-  suggestions: ProfileSuggestion[];
+  suggestions: Array<ProfileSuggestion | ProfileProposal>;
   valid_from: string | null;
   valid_to: string | null;
   approved_by: string | null;

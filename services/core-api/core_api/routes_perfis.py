@@ -285,6 +285,111 @@ def reactivate(company_id: str, profile_id: str, body: VersionRef, request: Requ
     return _set_status(s, request, acc, p, "PENDING_REVIEW", "reactivated")
 
 
+# ---------------------------------------------------------------- propostas de revisão
+class ProposalFields(Strict):
+    national_code: str | None = Field(None, pattern=r"^[0-9]{6}$")
+    municipal_code: str | None = Field(None, pattern=r"^[0-9A-Za-z]{1,20}$")
+    nbs_code: str | None = Field(None, pattern=r"^[0-9]{9}$")
+    issqn_taxation: str | None = Field(None, pattern="^(TAXABLE|IMMUNE|EXPORT|NOT_INCIDENT)$")
+    pis_cofins_cst: str | None = Field(None, pattern=r"^[0-9]{2}$")
+    ibs_cbs: IbsCbsProfile | None = None
+
+
+class ProposalAlternative(Strict):
+    id: str = Field(pattern=r"^[A-Z]$")
+    rotulo: str = Field(min_length=3, max_length=200)
+    condicao: str = Field(min_length=3, max_length=1500, description="O que precisa ser confirmado para valer.")
+    campos: ProposalFields
+    fundamento: list[str] = Field(min_length=1, max_length=20)
+
+
+class ProposalQuestion(Strict):
+    id: str = Field(pattern=r"^[A-Z0-9-]{1,20}$")
+    texto: str = Field(min_length=3, max_length=1500)
+    responsavel: str = Field(max_length=120)
+
+
+class ProposalIn(Strict):
+    id: str = Field(pattern=r"^[A-Z0-9-]{3,40}$")
+    resumo: str = Field(min_length=3, max_length=2000)
+    alternativas: list[ProposalAlternative] = Field(default_factory=list, max_length=6)
+    perguntas: list[ProposalQuestion] = Field(default_factory=list, max_length=30)
+    proxima_acao: str = Field(min_length=3, max_length=1000)
+    analise: dict = Field(default_factory=dict, description="Serviço, códigos, histórico, obra e dados por emissão.")
+
+    @model_validator(mode="after")
+    def _ids_unicos(self) -> ProposalIn:
+        if len({a.id for a in self.alternativas}) != len(self.alternativas):
+            raise ValueError("Alternativas com id repetido.")
+        return self
+
+
+def _proposta_campos(alt: ProposalAlternative) -> dict:
+    out = alt.campos.model_dump(exclude_none=True)  # proposta nunca apaga um campo do perfil
+    if out.get("ibs_cbs"):
+        out["ibs_cbs"] = _ibs(out["ibs_cbs"])
+    return out
+
+
+class ProposalResolveIn(VersionRef):
+    decision: str = Field(pattern="^(APPLY|DISCARD)$")
+    alternative: str | None = Field(None, pattern=r"^[A-Z]$")
+    note: str = Field(min_length=5, max_length=1000, description="Confirmação recebida (contrato, contabilidade) "
+                                                                 "ou motivo do descarte.")
+
+
+@router.post("/companies/{company_id}/service-profiles/{profile_id}/proposals/{proposal_id}/resolve", responses=ERRS,
+             summary="Resolve uma proposta de revisão: aplica a alternativa confirmada (o perfil continua pendente de "
+                     "revisão) ou a descarta. Nunca aprova o perfil.")
+def resolve_proposal(company_id: str, profile_id: str, proposal_id: str, body: ProposalResolveIn, request: Request,
+                     acc: CompanyAccess = Depends(company_access("admin")), s: Session = Depends(db_session)) -> dict:
+    import copy
+
+    p = _get(s, acc.company.id, profile_id)
+    _versao(p, body.expected_version)
+    if p.status != "PENDING_REVIEW":
+        raise ProblemError(409, "SERVICE_PROFILE_NOT_PENDING", f"Perfil em {p.status}: propostas só são resolvidas em "
+                                                               "perfil pendente de revisão.")
+    sugestoes = copy.deepcopy(p.suggestions or [])
+    prop = next((x for x in sugestoes if isinstance(x, dict) and x.get("tipo") == ps.PROPOSTA
+                 and x.get("id") == proposal_id), None)
+    if prop is None:
+        raise ProblemError(404, "PROPOSAL_NOT_FOUND", "Proposta de revisão não encontrada.")
+    if prop.get("status") != "ABERTA":
+        raise ProblemError(409, "PROPOSAL_ALREADY_RESOLVED", f"Proposta já {str(prop.get('status')).lower()}.")
+    now = ctx(request).clock.now()
+    alterados: dict = {}
+    if body.decision == "APPLY":
+        alt = next((a for a in prop.get("alternativas") or [] if a.get("id") == body.alternative), None)
+        if alt is None:
+            raise ProblemError(422, "PROPOSAL_ALTERNATIVE_REQUIRED", "Escolha uma das alternativas da proposta.")
+        campos = _proposta_campos(ProposalAlternative.model_validate(alt))
+        merged = {k: getattr(p, k) for k in ps.CAMPOS} | campos
+        _check_codes(merged)
+        alterados = {k: {"de": _jsonable(getattr(p, k)), "para": _jsonable(v)} for k, v in campos.items()
+                     if getattr(p, k) != v}
+        for k in alterados:
+            setattr(p, k, campos[k])
+        fontes = ps.fontes_usuario(list(campos), acc.user.id, now, p.field_sources)
+        for k in campos:
+            fontes[k]["proposta"] = f"{proposal_id}/{body.alternative}"
+        p.field_sources = fontes
+    prop.update(status="APLICADA" if body.decision == "APPLY" else "DESCARTADA", alternativa_aplicada=body.alternative
+                if body.decision == "APPLY" else None, resolvida_por=acc.user.id, resolvida_em=now.isoformat(),
+                nota=body.note)
+    p.suggestions = sugestoes
+    p.version += 1
+    p.updated_by, p.updated_at = acc.user.id, now
+    acao = "proposal_applied" if body.decision == "APPLY" else "proposal_discarded"
+    ps.registrar_versao(s, p, acao, now, acc.user.id)
+    audit(s, now, f"service_profile.{acao}", actor_id=acc.user.id, company_id=acc.company.id,
+          target_type="service_profile", target_id=p.id,
+          details={"version": p.version, "proposal": proposal_id, "alternative": body.alternative,
+                   "changes": alterados, "note": body.note}, trace_id=trace_id_for(request))
+    s.commit()
+    return profile_out(p, s.get(Company, acc.company.id), _today(request, acc.company))
+
+
 # ---------------------------------------------------------------- rotas internas (fiscal-api)
 class PreparedProposal(Strict):
     origin_key: str = Field(min_length=3, max_length=80)
@@ -350,6 +455,59 @@ def prepare(company_id: str, body: PrepareIn, request: Request, s: Session = Dep
         criados.append({"origin_key": prop.origin_key, "id": p.id})
     s.commit()
     return {"created": criados, "existing": existentes}
+
+
+class ProposalItem(Strict):
+    origin_key: str = Field(min_length=3, max_length=80)
+    proposal: ProposalIn
+
+
+class ProposalsIn(Strict):
+    actor_id: str | None = Field(None, max_length=64)
+    actor_type: str = Field("system", pattern="^(user|system)$")
+    items: list[ProposalItem] = Field(max_length=200)
+
+
+@internal.post("/companies/{company_id}/service-profiles/proposals")
+def register_proposals(company_id: str, body: ProposalsIn, request: Request, s: Session = Depends(db_session)) -> dict:
+    """Registra propostas de revisão em perfis PENDENTES. Não altera nenhum campo do perfil (só acrescenta a proposta,
+    que bloqueia a aprovação até ser resolvida por pessoa autorizada). Idempotente pelo id da proposta: uma proposta
+    já registrada nunca é substituída."""
+    c = ctx(request)
+    c.service_auth.authenticate(request, "service_profiles:prepare")
+    if s.get(Company, company_id) is None:
+        raise ProblemError(404, "COMPANY_NOT_FOUND", "Empresa não encontrada.")
+    now = c.clock.now()
+    out: dict[str, list] = {"registered": [], "existing": [], "skipped": []}
+    for item in body.items:
+        p = s.scalar(select(ServiceProfile).where(ServiceProfile.company_id == company_id,
+                                                  ServiceProfile.origin_key == item.origin_key).with_for_update())
+        if p is None:
+            out["skipped"].append({"origin_key": item.origin_key, "reason": "NOT_FOUND"})
+            continue
+        if p.status != "PENDING_REVIEW":
+            out["skipped"].append({"origin_key": item.origin_key, "reason": p.status})
+            continue
+        prop = item.proposal
+        if any(x.get("id") == prop.id for x in ps.propostas(p)):
+            out["existing"].append({"origin_key": item.origin_key, "proposal": prop.id})
+            continue
+        for alt in prop.alternativas:  # códigos das alternativas também precisam existir nas tabelas oficiais
+            _check_codes({k: getattr(p, k) for k in ps.CAMPOS} | _proposta_campos(alt))
+        registro = {"tipo": ps.PROPOSTA, "status": "ABERTA", "registrada_em": now.isoformat(),
+                    "registrada_por": f"{body.actor_type}:{body.actor_id or '-'}", **prop.model_dump(mode="json")}
+        p.suggestions = [*(p.suggestions or []), registro]
+        p.version += 1
+        p.updated_at = now
+        ps.registrar_versao(s, p, "proposal_registered", now, body.actor_id, body.actor_type)
+        audit(s, now, "service_profile.proposal_registered", actor_type=body.actor_type, actor_id=body.actor_id,
+              company_id=company_id, target_type="service_profile", target_id=p.id,
+              details={"version": p.version, "proposal": prop.id,
+                       "alternatives": [a.id for a in prop.alternativas],
+                       "questions": [q.id for q in prop.perguntas]}, trace_id=trace_id_for(request))
+        out["registered"].append({"origin_key": item.origin_key, "proposal": prop.id, "version": p.version})
+    s.commit()
+    return out
 
 
 @internal.get("/companies/{company_id}/service-profiles/{profile_id}")
