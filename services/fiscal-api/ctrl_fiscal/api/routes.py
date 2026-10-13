@@ -101,9 +101,14 @@ def dashboard(request: Request, environment: str | None = EnvQuery, cc: CompanyC
     except DomainError:
         raise
     s.commit()
+    from ..domain import classificacao as cl  # noqa: PLC0415
+
     return {
         "environment": env, "simulated": env == "mock", "documents": docs, "drafts": drafts, "queue": queue,
         "next_scheduled_at": next_at, "sync": sync_d.status_out(s, sched),
+        # Mesma classificação das listas de Rascunhos e de Emissões e agendamentos.
+        "views": {"drafts": cl.draft_counts(s, cc.company.id, env), "batches": cl.batch_view_counts(s, cc.company.id, env),
+                  "items": cl.item_counts(s, cc.company.id, env)},
     }
 
 
@@ -362,20 +367,28 @@ def tax_classifications(on: date = Query(..., description="Data do fato gerador 
                       for c in sorted(ibscbs.classificacoes_vigentes(on), key=lambda x: x["codigo"])]}
 
 
-@router.get("/drafts", response_model=sc.DraftPage, responses=E, tags=["drafts"])
+@router.get("/drafts", response_model=sc.DraftPage, responses=E, tags=["drafts"],
+            summary="Rascunhos por visão: pending (padrão: tudo que não foi autorizado), issued (autorizados após "
+                    "confirmação oficial) ou all. Filtro e contagens antes da paginação.")
 def list_drafts(
     status: sc.QueueStatus | None = Query(None), customer_id: str | None = Query(None, max_length=36),
+    view: str = Query("pending", pattern="^(pending|issued|all)$"),
     pp: PageParams = Depends(), cc: CompanyCtx = Depends(company_ctx("view")), s: Session = Depends(db_session),
 ) -> dict:
+    from ..domain import classificacao as cl  # noqa: PLC0415
+
     q = select(Draft).where(Draft.company_id == cc.company.id, Draft.environment == cc.company.environment,
-                            Draft.deleted_at.is_(None))
+                            Draft.deleted_at.is_(None), cl.draft_view(view))
     if status:
         q = q.where(Draft.status == status)
     if customer_id:
         q = q.where(Draft.customer_id == customer_id)
     total = s.scalar(select(func.count()).select_from(q.subquery()))
     rows = s.scalars(q.order_by(Draft.updated_at.desc(), Draft.id).offset(pp.offset).limit(pp.page_size)).all()
-    return {"items": [drafts_d.draft_out(d) for d in rows], "page": pp.page, "page_size": pp.page_size, "total": total}
+    notas = cl.issued_documents(s, rows)
+    return {"items": [{**drafts_d.draft_out(d), "issued": notas.get(d.id)} for d in rows], "page": pp.page,
+            "page_size": pp.page_size, "total": total, "view": view,
+            "counts": cl.draft_counts(s, cc.company.id, cc.company.environment)}
 
 
 @router.post("/drafts", status_code=201, response_model=sc.DraftOut, responses=E, tags=["drafts"])
@@ -393,7 +406,10 @@ def create_draft(body: sc.DraftCreate, request: Request, cc: CompanyCtx = Depend
 
 @router.get("/drafts/{draft_id}", response_model=sc.DraftOut, responses=E, tags=["drafts"])
 def get_draft(draft_id: str, cc: CompanyCtx = Depends(company_ctx("view")), s: Session = Depends(db_session)) -> dict:
-    return drafts_d.draft_out(drafts_d.get_draft(s, cc.company, draft_id))
+    from ..domain import classificacao as cl  # noqa: PLC0415
+
+    d = drafts_d.get_draft(s, cc.company, draft_id)
+    return {**drafts_d.draft_out(d), "issued": cl.issued_documents(s, [d]).get(d.id)}
 
 
 @router.patch("/drafts/{draft_id}", response_model=sc.DraftOut, responses=E, tags=["drafts"])
@@ -512,25 +528,35 @@ def create_batch(body: sc.BatchCreate, request: Request, cc: CompanyCtx = Depend
 
 
 @router.get("/batches", response_model=sc.BatchPage, responses=E, tags=["batches"])
-def list_batches(pp: PageParams = Depends(), cc: CompanyCtx = Depends(company_ctx("view")),
+def list_batches(view: str = Query("all", pattern="^(in_progress|attention|history|all)$"),
+                 pp: PageParams = Depends(), cc: CompanyCtx = Depends(company_ctx("view")),
                  s: Session = Depends(db_session)) -> dict:
-    q = select(Batch).where(Batch.company_id == cc.company.id, Batch.environment == cc.company.environment)
+    """Visões pelos estados reais dos itens (filtro e contagens antes da paginação); somente leitura."""
+    from ..domain import classificacao as cl  # noqa: PLC0415
+
+    q = select(Batch).where(Batch.company_id == cc.company.id, Batch.environment == cc.company.environment,
+                            cl.batch_view(view))
     total = s.scalar(select(func.count()).select_from(q.subquery()))
-    rows = s.scalars(q.order_by(Batch.scheduled_at.desc(), Batch.id).offset(pp.offset).limit(pp.page_size)).all()
+    rows = s.scalars(q.order_by(Batch.created_at.desc(), Batch.id).offset(pp.offset).limit(pp.page_size)).all()
     counts = batches_d.batch_counts(s, [b.id for b in rows])
-    return {"items": [batches_d.batch_out(b, counts[b.id]) for b in rows], "page": pp.page, "page_size": pp.page_size,
-            "total": total}
+    atencao = cl.attention_batches(s, [b.id for b in rows])
+    return {"items": [{**batches_d.batch_out(b, counts[b.id]), "needs_attention": b.id in atencao} for b in rows],
+            "page": pp.page, "page_size": pp.page_size, "total": total, "view": view,
+            "counts": cl.batch_view_counts(s, cc.company.id, cc.company.environment)}
 
 
 @router.get("/batches/{batch_id}", response_model=sc.BatchDetail, responses=E, tags=["batches"])
 def get_batch(batch_id: str, cc: CompanyCtx = Depends(company_ctx("view")), s: Session = Depends(db_session)) -> dict:
+    from ..domain import classificacao as cl  # noqa: PLC0415
+
     b = batches_d.get_batch(s, cc.company, batch_id)
     # Todos os itens do lote, em qualquer situação (rejeitados, retirados, pendentes, incertos e autorizados).
     items = s.scalars(select(BatchItem).where(BatchItem.batch_id == b.id, BatchItem.company_id == cc.company.id)
                       .order_by(BatchItem.created_at, BatchItem.id)).all()
     ids = {i.draft_id for i in items}
     drafts = {d.id: d for d in s.scalars(select(Draft).where(Draft.id.in_(ids), Draft.company_id == cc.company.id))}         if ids else {}
-    return batches_d.batch_out(b, batches_d.batch_counts(s, [b.id])[b.id], items, drafts)
+    return {**batches_d.batch_out(b, batches_d.batch_counts(s, [b.id])[b.id], items, drafts),
+            "needs_attention": bool(cl.attention_batches(s, [b.id]))}
 
 
 @router.post("/batches/{batch_id}/cancel-pending", response_model=sc.CancelPendingOut, responses=E, tags=["batches"])

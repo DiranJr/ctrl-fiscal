@@ -25,6 +25,15 @@ export const BatchSchedulingPage: React.FC<{ onNavigate: (route: string) => void
 
   const [batches, setBatches] = useState<Batch[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [listError, setListError] = useState<string | null>(null);
+  // Visões pelos estados reais dos itens, aplicadas no SERVIDOR antes da paginação.
+  const [view, setView] = useState<'in_progress' | 'attention' | 'history' | 'all'>('in_progress');
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [viewCounts, setViewCounts] = useState<Record<string, number>>({});
+  const PAGE_SIZE = 25;
+  const companyRef = React.useRef<string | undefined>(currentCompany?.id);
+  companyRef.current = currentCompany?.id;
 
   // Detalhes do Lote Selecionado
   const [selectedBatch, setSelectedBatch] = useState<Batch | null>(null);
@@ -34,18 +43,23 @@ export const BatchSchedulingPage: React.FC<{ onNavigate: (route: string) => void
   const [detailError, setDetailError] = useState<string | null>(null);
   const [isCancellingPending, setIsCancellingPending] = useState(false);
 
-  const loadBatches = useCallback(async () => {
+  const loadBatches = useCallback(async (silencioso = false) => {
     if (!currentCompany) return;
-    setIsLoading(true);
+    const companyId = currentCompany.id;
+    if (!silencioso) setIsLoading(true);
     try {
-      const res = await clients.fiscal.getBatches(currentCompany.id);
+      const res = await clients.fiscal.getBatches(companyId, page, PAGE_SIZE, view);
+      if (companyRef.current !== companyId) return; // resposta de outro workspace: descartada
       setBatches(res.items);
+      setTotal(res.total);
+      setViewCounts(res.counts || {});
+      setListError(null);
     } catch (err: any) {
-      showToast(err.message || 'Falha ao listar lotes agendados.', 'error');
+      if (!silencioso && companyRef.current === companyId) setListError(err.message || 'Falha ao listar emissões e agendamentos.');
     } finally {
-      setIsLoading(false);
+      if (!silencioso) setIsLoading(false);
     }
-  }, [currentCompany, clients.fiscal, showToast]);
+  }, [currentCompany, clients.fiscal, page, view]);
 
   useEffect(() => {
     loadBatches();
@@ -65,6 +79,25 @@ export const BatchSchedulingPage: React.FC<{ onNavigate: (route: string) => void
       setDetailLoading(false);
     }
   };
+
+  // Atualiza (só leitura) enquanto houver emissão em andamento; para quando a aba fica oculta ou nada está ativo.
+  const ativo = (viewCounts['in_progress'] || 0) > 0;
+  useEffect(() => {
+    if (!ativo) return;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
+      loadBatches(true);
+      if (selectedBatch && detail && (detail.counts?.SCHEDULED || detail.counts?.PROCESSING || detail.counts?.AWAITING_CONFIRMATION)) {
+        loadDetail(selectedBatch.id);
+      }
+    }, 20000);
+    return () => window.clearInterval(timer);
+  }, [ativo, loadBatches, selectedBatch, detail]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const fuso = currentCompany?.timezone || 'America/Sao_Paulo';
+  const dataHora = (v: string) => new Intl.DateTimeFormat('pt-BR', { timeZone: fuso, day: '2-digit', month: '2-digit',
+    year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(v));
+  const quando = (b: Batch) => (b.mode === 'NOW' ? `Solicitada em ${dataHora(b.created_at)}` : `Programada para ${dataHora(b.scheduled_at)}`);
 
   const openBatch = (b: Batch) => {
     setSelectedBatch(b);
@@ -92,59 +125,42 @@ export const BatchSchedulingPage: React.FC<{ onNavigate: (route: string) => void
 
   const columns: Column<Batch>[] = [
     {
-      key: 'id',
-      header: 'ID do Lote',
-      render: (b) => <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8125rem' }}>{b.id.slice(0, 12)}...</span>,
+      key: 'mode',
+      header: 'Emissão',
+      render: (b) => (
+        <div>
+          <Badge status={b.mode === 'NOW' ? 'PROCESSING' : 'SCHEDULED'} customLabel={b.mode === 'NOW' ? 'Emissão imediata' : 'Agendada'} size="sm" />
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--color-text-subtle)' }}>#{b.id.slice(0, 8)}</div>
+        </div>
+      ),
     },
     {
-      key: 'scheduled_at',
-      header: 'Data/Hora de Início',
-      render: (b) => {
-        const localFormatted = new Intl.DateTimeFormat('pt-BR', {
-          timeZone: b.timezone,
-          day: '2-digit',
-          month: '2-digit',
-          year: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit',
-        }).format(new Date(b.scheduled_at));
-        return (
-          <div>
-            <div style={{ fontWeight: 600 }}>{localFormatted}</div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--color-text-subtle)' }}>
-              Fuso: {b.timezone} {b.scheduled_local ? `(${b.scheduled_local})` : ''}
-            </div>
-          </div>
-        );
-      },
+      key: 'when',
+      header: 'Quando',
+      render: (b) => <span>{quando(b)}</span>,
     },
     {
-      key: 'total',
-      header: 'Total de Notas',
-      align: 'center',
-      render: (b) => <span style={{ fontWeight: 600 }}>{b.total}</span>,
+      key: 'items',
+      header: 'Itens',
+      render: (b) => (
+        <span style={{ fontSize: '0.8125rem' }}>
+          {b.total} item(ns){SITUACOES.filter(([k]) => (b.counts?.[k] || 0) > 0).length ? ': ' : ''}
+          {SITUACOES.filter(([k]) => (b.counts?.[k] || 0) > 0).map(([k, l]) => `${b.counts[k]} ${l}`).join(' · ')}
+        </span>
+      ),
     },
     {
       key: 'status',
-      header: 'Status do Lote',
+      header: 'Situação',
       render: (b) => {
         const cfg = getBatchStatusBadgeConfig(b.status);
         return (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-            <div><Badge status={cfg.status} customLabel={cfg.label} /></div>
-            {b.progress && (
-              <span style={{ fontSize: '0.6875rem', color: 'var(--color-text-subtle)' }}>
-                Progresso: {b.progress.done}/{b.progress.total} ({b.progress.percent}%)
-              </span>
-            )}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', alignItems: 'flex-start' }}>
+            <Badge status={cfg.status} customLabel={cfg.label} />
+            {b.needs_attention && <Badge status="REJECTED" customLabel="Exige atenção" size="sm" />}
           </div>
         );
       },
-    },
-    {
-      key: 'created_at',
-      header: 'Criado em',
-      render: (b) => <span>{new Date(b.created_at).toLocaleDateString('pt-BR')}</span>,
     },
     {
       key: 'actions',
@@ -159,7 +175,7 @@ export const BatchSchedulingPage: React.FC<{ onNavigate: (route: string) => void
             openBatch(b);
           }}
         >
-          👁️ Ver Itens
+          Ver itens
         </Button>
       ),
     },
@@ -171,22 +187,35 @@ export const BatchSchedulingPage: React.FC<{ onNavigate: (route: string) => void
       {/* Title & Navigation */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem' }}>
         <div>
-          <h1 style={{ fontSize: '1.5rem', fontWeight: 700, margin: 0 }}>Lotes Agendados</h1>
+          <h1 style={{ fontSize: '1.5rem', fontWeight: 700, margin: 0 }}>Emissões e agendamentos</h1>
           <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.875rem', color: 'var(--color-text-muted)' }}>
-            Programação e acompanhamento de remessas para transmissão em 00:01
+            Acompanhe as emissões imediatas e agendadas, o que exige atenção e o histórico.
           </p>
         </div>
 
         <Button variant="primary" onClick={() => onNavigate('rascunhos')}>
-          ➕ Agendar Novo Lote a partir dos Rascunhos
+          ➕ Emitir ou agendar rascunhos
         </Button>
       </div>
 
       {/* Information Banner */}
-      <Alert variant="info" title="Regra de Início Elegível para Transmissão">
-        O horário agendado marca o momento em que os itens se tornam elegíveis para transmissão automática pelo worker no fuso {currentCompany?.timezone || 'America/Sao_Paulo'}.
-        A retirada de itens pendentes não equivale ao cancelamento de NFS-e autorizada.
+      <Alert variant="info" title="Como funciona">
+        O agendamento define quando o processamento pode começar (no fuso {fuso}); a emissão imediata começa assim que
+        confirmada. Retirar um item da fila só vale antes do envio — não cancela uma NFS-e já autorizada.
       </Alert>
+
+      <div className="pf-filtro" role="group" aria-label="Filtrar emissões e agendamentos">
+        {([['in_progress', 'Em andamento'], ['attention', 'Exigem atenção'], ['history', 'Histórico'], ['all', 'Todos']] as const).map(([v, l]) => (
+          <button key={v} type="button" className="pf-filtro-btn" aria-pressed={view === v} onClick={() => { setView(v); setPage(1); }}>
+            {l}{viewCounts[v] != null ? ` (${viewCounts[v]})` : ''}
+          </button>
+        ))}
+      </div>
+      {listError && (
+        <Alert variant="error" title="Não foi possível carregar a lista">
+          {listError} <Button size="sm" variant="secondary" onClick={() => loadBatches()}>Tentar novamente</Button>
+        </Alert>
+      )}
 
       {/* Batches Table */}
       <Table
@@ -194,17 +223,25 @@ export const BatchSchedulingPage: React.FC<{ onNavigate: (route: string) => void
         data={batches}
         keyExtractor={(b) => b.id}
         isLoading={isLoading}
-        emptyMessage="Nenhum lote programado no momento."
+        emptyMessage={listError ? 'Lista não carregada.' : view === 'in_progress' ? 'Nenhuma emissão em andamento.'
+          : view === 'attention' ? 'Nada exige atenção.' : view === 'history' ? 'Nenhum lote encerrado.' : 'Nenhuma emissão ou agendamento.'}
         onRowClick={(b) => openBatch(b)}
       />
+      {total > PAGE_SIZE && (
+        <div className="pf-actions-end" aria-label="Paginação">
+          <Button size="sm" variant="outline" disabled={page <= 1} onClick={() => setPage((n) => n - 1)}>Anterior</Button>
+          <span className="pf-help">Página {page} de {Math.ceil(total / PAGE_SIZE)} · {total} lote(s)</span>
+          <Button size="sm" variant="outline" disabled={page * PAGE_SIZE >= total} onClick={() => setPage((n) => n + 1)}>Próxima</Button>
+        </div>
+      )}
 
       {/* Modal com Detalhes dos Itens do Lote */}
       {selectedBatch && (
         <Modal
           isOpen={true}
           onClose={() => { setSelectedBatch(null); setDetail(null); }}
-          title={`Detalhes do Lote #${selectedBatch.id.slice(0, 8)}`}
-          description={`Agendado para ${new Intl.DateTimeFormat('pt-BR', { timeZone: selectedBatch.timezone, day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(selectedBatch.scheduled_at))} no fuso ${selectedBatch.timezone}`}
+          title={`${selectedBatch.mode === 'NOW' ? 'Emissão imediata' : 'Emissão agendada'} #${selectedBatch.id.slice(0, 8)}`}
+          description={`${quando(selectedBatch)} (fuso ${fuso})`}
           maxWidth="860px"
           footer={
             <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center' }}>

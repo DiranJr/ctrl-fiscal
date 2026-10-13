@@ -39,20 +39,20 @@ export const DashboardPage: React.FC<{ onNavigate: (route: string) => void }> = 
 
   const statCards = [
     {
-      title: 'Rascunhos em edição',
+      title: 'Rascunhos pendentes',
       count: dashboardCounters?.drafts_count ?? 0,
       icon: 'draft',
       route: 'rascunhos',
       color: 'var(--color-primary)',
-      sub: 'Notas em preparação',
+      sub: 'Ainda não emitidos (inclui em fila e rejeitados)',
     },
     {
-      title: 'Notas agendadas',
+      title: 'Emissões em andamento',
       count: dashboardCounters?.scheduled_count ?? 0,
       icon: 'clock',
       route: 'agendamentos',
       color: 'var(--status-scheduled-text)',
-      sub: 'Lotes para dia 01 às 00:01',
+      sub: 'Agendadas, em fila ou aguardando confirmação',
     },
     {
       title: 'Notas emitidas',
@@ -63,12 +63,12 @@ export const DashboardPage: React.FC<{ onNavigate: (route: string) => void }> = 
       sub: 'Autorizadas no ambiente',
     },
     {
-      title: 'Notas rejeitadas',
+      title: 'Exigem atenção',
       count: dashboardCounters?.rejected_count ?? 0,
       icon: 'file',
-      route: 'emitidas',
+      route: 'agendamentos',
       color: 'var(--status-rejected-text)',
-      sub: 'Requerem correção',
+      sub: 'Rejeições e bloqueios não resolvidos',
     },
     {
       title: 'Recebidas pendentes',
@@ -99,10 +99,10 @@ export const DashboardPage: React.FC<{ onNavigate: (route: string) => void }> = 
       route: 'nova-nfse',
     },
     {
-      title: 'Programar lote para 01 às 00:01',
-      sub: 'Transmissão no fuso da empresa com Idempotency-Key',
-      action: 'Agendar',
-      route: 'agendamentos',
+      title: 'Emitir ou agendar rascunhos',
+      sub: 'Emissão imediata ou na data escolhida, no fuso da empresa',
+      action: 'Abrir',
+      route: 'rascunhos',
     },
     {
       title: 'Conferência de notas tomadas',

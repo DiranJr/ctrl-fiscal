@@ -79,6 +79,12 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
   };
 
   const [drafts, setDrafts] = useState<Draft[]>([]);
+  // Visão aplicada no SERVIDOR (antes da paginação), com a mesma classificação do painel.
+  const [draftView, setDraftView] = useState<'pending' | 'issued' | 'all'>('pending');
+  const [draftPage, setDraftPage] = useState(1);
+  const [draftTotal, setDraftTotal] = useState(0);
+  const [viewCounts, setViewCounts] = useState<Record<string, number>>({});
+  const PAGE_SIZE = 25;
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [selectedDraftIds, setSelectedDraftIds] = useState<Set<string>>(new Set());
@@ -223,18 +229,32 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
   const [prodConfirmed, setProdConfirmed] = useState(false);
   const isProd = currentCompany?.environment === 'production';
 
-  const loadDrafts = useCallback(async () => {
+  const loadDrafts = useCallback(async (silencioso = false) => {
     if (!currentCompany) return;
-    setIsLoading(true);
+    const companyId = currentCompany.id;
+    if (!silencioso) setIsLoading(true);
     try {
-      const res = await clients.fiscal.getDrafts(currentCompany.id);
+      const res = await clients.fiscal.getDrafts(companyId, draftPage, PAGE_SIZE, draftView);
+      if (companyIdRef.current !== companyId) return; // resposta de outro workspace: descartada
       setDrafts(res.items);
+      setDraftTotal(res.total);
+      setViewCounts(res.counts || {});
+      // Emitidos não podem ser selecionados para emitir de novo: a seleção fica só com os da página.
+      setSelectedDraftIds((prev) => new Set([...prev].filter((id) => res.items.some((d) => d.id === id && d.status === 'DRAFT'))));
     } catch (err: any) {
-      showToast(err.message || 'Falha ao listar rascunhos.', 'error');
+      if (!silencioso) showToast(err.message || 'Falha ao listar rascunhos.', 'error');
     } finally {
-      setIsLoading(false);
+      if (!silencioso) setIsLoading(false);
     }
-  }, [currentCompany, clients.fiscal, showToast]);
+  }, [currentCompany, clients.fiscal, showToast, draftPage, draftView]);
+
+  // Enquanto houver item em fila, processamento ou aguardando confirmação, atualiza a lista (leitura apenas).
+  const emAndamento = drafts.some((d) => ['SCHEDULED', 'PROCESSING', 'AWAITING_CONFIRMATION'].includes(d.status));
+  useEffect(() => {
+    if (!emAndamento) return;
+    const timer = window.setInterval(() => { if (document.visibilityState === 'visible') loadDrafts(true); }, 15000);
+    return () => window.clearInterval(timer);
+  }, [emAndamento, loadDrafts]);
 
   const loadCustomers = useCallback(async () => {
     if (!currentCompany) return;
@@ -276,12 +296,18 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
     setSelectedDraftIds(updated);
   };
 
+  const selecionaveis = drafts.filter((d) => d.status === 'DRAFT');
   const toggleSelectAll = () => {
-    if (selectedDraftIds.size === drafts.length) {
+    if (selecionaveis.length > 0 && selecionaveis.every((d) => selectedDraftIds.has(d.id))) {
       setSelectedDraftIds(new Set());
     } else {
-      setSelectedDraftIds(new Set(drafts.map((d) => d.id)));
+      setSelectedDraftIds(new Set(selecionaveis.map((d) => d.id)));
     }
+  };
+  const verNota = (d: Draft) => {
+    if (!currentCompany) return;
+    const doc = d.issued?.document_id;
+    window.location.href = `/fiscal/?view=emitidas&company_id=${encodeURIComponent(currentCompany.id)}${doc ? `&doc=${encodeURIComponent(doc)}` : ''}`;
   };
 
   // Validar Rascunho individualmente com o backend
@@ -833,20 +859,24 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
       header: (
         <input
           type="checkbox"
-          checked={drafts.length > 0 && selectedDraftIds.size === drafts.length}
+          aria-label="Selecionar todos os rascunhos editáveis desta página"
+          checked={selecionaveis.length > 0 && selecionaveis.every((d) => selectedDraftIds.has(d.id))}
           onChange={toggleSelectAll}
+          disabled={selecionaveis.length === 0}
           style={{ width: '16px', height: '16px', accentColor: 'var(--color-primary)' }}
         />
       ),
       width: '40px',
-      render: (d) => (
+      // Só rascunho editável entra em "Emitir ou agendar": emitidos, em fila ou rejeitados não são selecionáveis.
+      render: (d) => d.status === 'DRAFT' ? (
         <input
           type="checkbox"
+          aria-label={`Selecionar rascunho de ${d.customer?.name || 'tomador'}`}
           checked={selectedDraftIds.has(d.id)}
           onChange={() => toggleSelect(d.id)}
           style={{ width: '16px', height: '16px', accentColor: 'var(--color-primary)' }}
         />
-      ),
+      ) : null,
     },
     {
       key: 'customer',
@@ -945,7 +975,18 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
           return <Badge status="PROCESSING" customLabel="Processando" />;
         }
         if (d.status === 'AUTHORIZED') {
-          return <Badge status="AUTHORIZED" customLabel="Autorizada" />;
+          const st = d.issued?.status;
+          return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+              <Badge status="AUTHORIZED" customLabel="Emitida" />
+              {st === 'CANCELLED' && <Badge status="CANCELLED" customLabel="NFS-e cancelada" size="sm" />}
+              {st === 'SUBSTITUTED' && <Badge status="WITHDRAWN" customLabel="NFS-e substituída" size="sm" />}
+              {d.issued?.number && <span className="pf-help">NFS-e nº {d.issued.number}</span>}
+            </div>
+          );
+        }
+        if (d.status === 'AWAITING_CONFIRMATION') {
+          return <Badge status="PROCESSING" customLabel="Aguardando confirmação" />;
         }
         if (d.status === 'WITHDRAWN') {
           return <Badge status="WITHDRAWN" customLabel="Retirado da Fila" />;
@@ -1004,6 +1045,24 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
           );
         }
 
+        if (d.status === 'AUTHORIZED') {
+          return (
+            <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+              <Button size="sm" variant="outline" title="Abrir a NFS-e emitida" onClick={(e) => { e.stopPropagation(); verNota(d); }}>
+                Ver nota
+              </Button>
+            </div>
+          );
+        }
+        if (d.status === 'PROCESSING' || d.status === 'AWAITING_CONFIRMATION') {
+          return (
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <span className="pf-help" style={{ textAlign: 'right' }}>
+                {d.status === 'PROCESSING' ? 'Em processamento — aguarde.' : 'Aguardando a reconciliação oficial — não reenvie.'}
+              </span>
+            </div>
+          );
+        }
         if (!isEditable) {
           return (
             <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
@@ -1088,7 +1147,7 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
         <div>
           <h1 style={{ fontSize: '1.5rem', fontWeight: 700, margin: 0 }}>Rascunhos de NFS-e</h1>
           <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.875rem', color: 'var(--color-text-muted)' }}>
-            Gerencie, valide, edite e agende transmissões em lote para o início do mês.
+            Prepare, valide e edite as notas; depois emita agora ou agende a emissão. Notas emitidas ficam em “Emitidos”.
           </p>
         </div>
 
@@ -1116,14 +1175,32 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
         </div>
       </div>
 
+      {/* Visões (no servidor, antes da paginação) */}
+      <div className="pf-filtro" role="group" aria-label="Filtrar rascunhos">
+        {([['pending', 'Pendentes'], ['issued', 'Emitidos'], ['all', 'Todos']] as const).map(([v, l]) => (
+          <button key={v} type="button" className="pf-filtro-btn" aria-pressed={draftView === v}
+            onClick={() => { setDraftView(v); setDraftPage(1); setSelectedDraftIds(new Set()); }}>
+            {l}{viewCounts[v] != null ? ` (${viewCounts[v]})` : ''}
+          </button>
+        ))}
+      </div>
+
       {/* Main Table */}
       <Table
         columns={columns}
         data={drafts}
         keyExtractor={(d) => d.id}
         isLoading={isLoading}
-        emptyMessage="Nenhum rascunho encontrado para esta empresa."
+        emptyMessage={draftView === 'issued' ? 'Nenhuma nota emitida a partir de rascunhos.' : draftView === 'pending'
+          ? 'Nenhum rascunho pendente.' : 'Nenhum rascunho encontrado para esta empresa.'}
       />
+      {draftTotal > PAGE_SIZE && (
+        <div className="pf-actions-end" aria-label="Paginação">
+          <Button size="sm" variant="outline" disabled={draftPage <= 1} onClick={() => setDraftPage((n) => n - 1)}>Anterior</Button>
+          <span className="pf-help">Página {draftPage} de {Math.ceil(draftTotal / PAGE_SIZE)} · {draftTotal} rascunho(s)</span>
+          <Button size="sm" variant="outline" disabled={draftPage * PAGE_SIZE >= draftTotal} onClick={() => setDraftPage((n) => n + 1)}>Próxima</Button>
+        </div>
+      )}
 
       {/* Modal de Edição Completo do Rascunho */}
       {editingDraft && (

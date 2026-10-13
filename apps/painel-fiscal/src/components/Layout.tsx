@@ -13,7 +13,7 @@ const MENU = [
   { id: 'dashboard', label: 'Painel', icon: 'home' },
   { id: 'nova-nfse', label: 'Nova NFS-e', icon: 'plus' },
   { id: 'rascunhos', label: 'Rascunhos', icon: 'draft' },
-  { id: 'agendamentos', label: 'Agendamentos', icon: 'clock' },
+  { id: 'agendamentos', label: 'Emissões e agendamentos', icon: 'clock' },
   { id: 'emitidas', label: 'Notas emitidas', icon: 'upload' },
   { id: 'recebidas', label: 'Notas recebidas', icon: 'download' },
   { id: 'importar-exportar', label: 'Importar / exportar', icon: 'swap' },

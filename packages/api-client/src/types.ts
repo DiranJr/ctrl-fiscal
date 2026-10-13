@@ -787,6 +787,8 @@ export interface Draft {
   editable?: boolean;
   environment?: 'mock' | 'restricted' | 'production' | string;
   current_item_id?: string | null;
+  /** Rascunho emitido: nota e situação atual. */
+  issued?: DraftIssued | null;
   created_at: string;
   updated_at: string;
 }
@@ -898,6 +900,7 @@ export interface BatchItem {
   /** Diagnóstico (somente leitura): etapa, erros com origem, referências, rascunho de origem e orientação. */
   stage?: 'QUEUED' | 'BLOCKED_BEFORE_SEND' | 'SENDING' | 'UNCERTAIN' | 'LOCAL_VALIDATION' | 'OFFICIAL_REJECTION' | 'AUTHORIZED' | 'WITHDRAWN' | string | null;
   stage_label?: string | null;
+  needs_attention?: boolean | null;
   guidance?: string | null;
   /** false/true quando o fluxo garante; null = só a reconciliação oficial (consulta da DPS) pode dizer. */
   transmitted?: boolean | null;
@@ -931,6 +934,8 @@ export interface Batch {
   created_at: string;
   created_by?: string;
   items?: BatchItem[];
+  /** Há item rejeitado não resolvido ou bloqueado antes do envio. */
+  needs_attention?: boolean | null;
 }
 
 export interface CreateBatchRequest {
@@ -1048,6 +1053,8 @@ export interface Dashboard {
   queue: Record<string, number>;
   next_scheduled_at: string | null;
   sync: SyncStatus;
+  /** Contagens pela classificação das listas (rascunhos, lotes e itens ativos/que exigem atenção). */
+  views?: { drafts?: Record<string, number>; batches?: Record<string, number>; items?: Record<string, number> } | null;
 }
 
 export interface DashboardCounters extends Dashboard {
@@ -1064,6 +1071,16 @@ export interface PaginatedResponse<T> {
   page: number;
   page_size: number;
   total: number;
+  /** Visão aplicada no servidor e o total de cada visão (mesma classificação do painel). */
+  view?: string;
+  counts?: Record<string, number>;
+}
+export type DraftView = 'pending' | 'issued' | 'all';
+export type BatchView = 'in_progress' | 'attention' | 'history' | 'all';
+/** Nota de um rascunho emitido, com a situação ATUAL (o rascunho não é reaberto). */
+export interface DraftIssued {
+  document_id: string | null; number?: string | null; access_key?: string | null; authorized_at?: string | null;
+  status: 'AUTHORIZED' | 'CANCELLED' | 'SUBSTITUTED' | string;
 }
 
 export interface ProblemFieldError {

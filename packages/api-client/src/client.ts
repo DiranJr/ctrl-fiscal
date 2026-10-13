@@ -16,6 +16,8 @@ import {
   DocumentFilter,
   ReviewDocumentRequest,
   Draft,
+  DraftView,
+  BatchView,
   DraftDeleted,
   CreateDraftRequest,
   UpdateDraftRequest,
@@ -137,7 +139,7 @@ export interface IFiscalApiClient {
   /** Completa só campos vazios do cadastro; divergências voltam sem alteração. */
   applyProviderDataFromDocuments(companyId: string): Promise<ProviderDataApplyResult>;
   getIbsCbsPreview(companyId: string, draftId: string): Promise<IbsCbsPreview>;
-  getDrafts(companyId: string, page?: number, pageSize?: number): Promise<PaginatedResponse<Draft>>;
+  getDrafts(companyId: string, page?: number, pageSize?: number, view?: DraftView): Promise<PaginatedResponse<Draft>>;
   getDraft(companyId: string, draftId: string): Promise<Draft>;
   createDraft(companyId: string, req: CreateDraftRequest): Promise<Draft>;
   updateDraft(companyId: string, draftId: string, req: UpdateDraftRequest): Promise<Draft>;
@@ -148,7 +150,7 @@ export interface IFiscalApiClient {
   /** Registra (ou reutiliza a aprovada) a configuração tributária da operação do rascunho. Não aprova nem emite. */
   registerOperationConfig(companyId: string, draftId: string, expectedVersion: number): Promise<Draft>;
   createBatch(companyId: string, req: CreateBatchRequest, idempotencyKey: string): Promise<{ batch_id: string; status: 'SCHEDULED'; mode?: 'NOW' | 'SCHEDULED'; scheduled_at: string; total: number }>;
-  getBatches(companyId: string, page?: number, pageSize?: number): Promise<PaginatedResponse<Batch>>;
+  getBatches(companyId: string, page?: number, pageSize?: number, view?: BatchView): Promise<PaginatedResponse<Batch>>;
   getBatch(companyId: string, batchId: string): Promise<Batch>;
   cancelBatchPending(companyId: string, batchId: string): Promise<CancelPendingOut>;
   getSyncStatus(companyId: string, environment?: string): Promise<SyncStatus>;
@@ -847,11 +849,12 @@ export class HttpFiscalApiClient implements IFiscalApiClient {
   async getDashboard(companyId: string, environment?: string): Promise<DashboardCounters> {
     const qs = environment ? `?environment=${encodeURIComponent(environment)}` : '';
     const raw = await this.request<any>(companyId, `/dashboard${qs}`);
-    const draftsCount = (raw.drafts?.['DRAFT'] || 0);
-    const scheduledCount = (raw.queue?.['SCHEDULED'] || 0) + (raw.queue?.['PROCESSING'] || 0);
+    // Mesma classificação das listas (servidor); estados brutos só como compatibilidade com versões anteriores.
+    const draftsCount = raw.views?.drafts?.pending ?? (raw.drafts?.['DRAFT'] || 0);
+    const scheduledCount = raw.views?.items?.active ?? ((raw.queue?.['SCHEDULED'] || 0) + (raw.queue?.['PROCESSING'] || 0));
     const issuedCount = raw.documents?.issued_total ?? 0;
     const receivedPendingCount = raw.documents?.received_pending_review ?? 0;
-    const rejectedCount = raw.queue?.['REJECTED'] || 0;
+    const rejectedCount = raw.views?.items?.attention ?? (raw.queue?.['REJECTED'] || 0);
     const lastSyncAt = raw.sync?.last_success_at ?? null;
 
     return {
@@ -861,6 +864,7 @@ export class HttpFiscalApiClient implements IFiscalApiClient {
       drafts: raw.drafts || {},
       queue: raw.queue || {},
       next_scheduled_at: raw.next_scheduled_at || null,
+      views: raw.views || null,
       sync: raw.sync || {
         enabled: false,
         interval_hours: 6,
@@ -1038,8 +1042,8 @@ export class HttpFiscalApiClient implements IFiscalApiClient {
     return this.request<RecipientSuggestion>(companyId, `/documents/${documentId}/recipient`);
   }
 
-  async getDrafts(companyId: string, page = 1, pageSize = 25): Promise<PaginatedResponse<Draft>> {
-    return this.request<PaginatedResponse<Draft>>(companyId, `/drafts?page=${page}&page_size=${pageSize}`);
+  async getDrafts(companyId: string, page = 1, pageSize = 25, view: DraftView = 'pending'): Promise<PaginatedResponse<Draft>> {
+    return this.request<PaginatedResponse<Draft>>(companyId, `/drafts?page=${page}&page_size=${pageSize}&view=${view}`);
   }
 
   async getDraft(companyId: string, draftId: string): Promise<Draft> {
@@ -1250,8 +1254,8 @@ export class HttpFiscalApiClient implements IFiscalApiClient {
   }
 
   // D11: BatchOut
-  async getBatches(companyId: string, page = 1, pageSize = 25): Promise<PaginatedResponse<Batch>> {
-    return this.request<PaginatedResponse<Batch>>(companyId, `/batches?page=${page}&page_size=${pageSize}`);
+  async getBatches(companyId: string, page = 1, pageSize = 25, view: BatchView = 'all'): Promise<PaginatedResponse<Batch>> {
+    return this.request<PaginatedResponse<Batch>>(companyId, `/batches?page=${page}&page_size=${pageSize}&view=${view}`);
   }
 
   // D11: BatchDetail (inclui items)

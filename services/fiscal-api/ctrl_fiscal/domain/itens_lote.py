@@ -73,6 +73,9 @@ def diagnostico(i: BatchItem, draft: Draft | None) -> dict:
     cust = snap.get("customer") or {}
     return {
         "stage": e,
+        # Mesma regra de classificacao.item_attention: rejeição ainda vinculada ao rascunho ou bloqueio antes do envio.
+        "needs_attention": (i.status == "REJECTED" and draft is not None and draft.current_item_id == i.id
+                            and draft.deleted_at is None) or (i.status == "SCHEDULED" and bool(i.last_error_code)),
         "stage_label": ETAPAS[e],
         "guidance": ORIENTACAO[e],
         # True/False quando o fluxo garante; None = só a reconciliação (consulta oficial da DPS) pode dizer.

@@ -1,0 +1,97 @@
+{
+ "ambiente": "http://127.0.0.1:8098",
+ "governo": "simulado",
+ "dados": "fictícios",
+ "resultados": [
+  {
+   "teste": "preparação: emitidos (imediata), cancelada, substituída, registro anterior, rejeitado, misto e pendente",
+   "resultado": "PASS",
+   "obtido": ""
+  },
+  {
+   "teste": "Pendentes é o padrão: sem emitidos; rejeitado, incerto e pendente visíveis; contagens do servidor",
+   "resultado": "PASS",
+   "obtido": ""
+  },
+  {
+   "teste": "incerto: 'Aguardando confirmação', sem editar nem selecionar",
+   "resultado": "PASS",
+   "obtido": ""
+  },
+  {
+   "teste": "Emitidos: 'Emitida' com 'Ver nota', sem seleção/edição/exclusão; cancelada, substituída e registro anterior",
+   "resultado": "PASS",
+   "obtido": ""
+  },
+  {
+   "teste": "Ver nota abre a NFS-e em Notas emitidas",
+   "resultado": "PASS",
+   "obtido": ""
+  },
+  {
+   "teste": "título, menu, botão e aviso atualizados; sem horário fixo 00:01",
+   "resultado": "PASS",
+   "obtido": ""
+  },
+  {
+   "teste": "abas com as contagens do servidor",
+   "resultado": "PASS",
+   "obtido": "{\"in_progress\": 1, \"attention\": 1, \"history\": 4, \"all\": 5}"
+  },
+  {
+   "teste": "Em andamento (padrão): agendados e incertos; modo 'Agendada' e 'Programada para'",
+   "resultado": "PASS",
+   "obtido": ""
+  },
+  {
+   "teste": "Exigem atenção: rejeição não resolvida, com a marca",
+   "resultado": "PASS",
+   "obtido": ""
+  },
+  {
+   "teste": "Histórico: emissão imediata com 'Solicitada em'; rejeitado encerrado também no histórico",
+   "resultado": "PASS",
+   "obtido": ""
+  },
+  {
+   "teste": "detalhe do autorizado com 'Ver nota'",
+   "resultado": "PASS",
+   "obtido": ""
+  },
+  {
+   "teste": "rejeitado: 'Abrir rascunho e pendências' abre o editor do rascunho",
+   "resultado": "PASS",
+   "obtido": ""
+  },
+  {
+   "teste": "falha no detalhe: mensagem e nova tentativa",
+   "resultado": "PASS",
+   "obtido": ""
+  },
+  {
+   "teste": "lista atualiza sozinha durante o processamento (sem recarregar)",
+   "resultado": "PASS",
+   "obtido": "0648f06a"
+  },
+  {
+   "teste": "celular: Rascunhos e Emissões sem rolagem horizontal",
+   "resultado": "PASS",
+   "obtido": "[0, 0]"
+  },
+  {
+   "teste": "sem violação de CSP",
+   "resultado": "PASS",
+   "obtido": ""
+  },
+  {
+   "teste": "emitido: servidor recusa editar, excluir e reenviar",
+   "resultado": "PASS",
+   "obtido": "409/409/409"
+  },
+  {
+   "teste": "isolamento: outro workspace não vê lotes nem rascunhos de A",
+   "resultado": "PASS",
+   "obtido": ""
+  }
+ ]
+}

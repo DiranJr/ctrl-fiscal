@@ -503,6 +503,7 @@ class DraftOut(BaseModel):
     current_item_id: str | None
     created_at: datetime
     updated_at: datetime
+    issued: dict[str, Any] | None = Field(None, description="Rascunho emitido: nota (document_id, número, chave) e a situação ATUAL — AUTHORIZED, CANCELLED ou SUBSTITUTED.")
 
 
 class DraftPage(BaseModel):
@@ -510,6 +511,8 @@ class DraftPage(BaseModel):
     page: int
     page_size: int
     total: int
+    view: str | None = Field(None, description="pending | issued | all")
+    counts: dict[str, int] | None = Field(None, description="Total de cada visão (mesma classificação do painel).")
 
 
 class ValidationOut(BaseModel):
@@ -746,6 +749,7 @@ class BatchItemOut(BaseModel):
     stage: str | None = Field(None, description="QUEUED | BLOCKED_BEFORE_SEND | SENDING | UNCERTAIN | LOCAL_VALIDATION | "
                                                 "OFFICIAL_REJECTION | AUTHORIZED | WITHDRAWN")
     stage_label: str | None = None
+    needs_attention: bool | None = Field(None, description="Item que exige revisão (rejeição não resolvida ou bloqueio).")
     guidance: str | None = Field(None, description="Como corrigir ou reconciliar.")
     transmitted: bool | None = Field(None, description="false/true quando o fluxo garante; null = depende da "
                                                        "reconciliação oficial (consulta da DPS).")
@@ -781,6 +785,7 @@ class BatchOut(BaseModel):
     progress: Progress
     created_at: datetime
     created_by: str
+    needs_attention: bool | None = Field(None, description="Há item rejeitado não resolvido ou bloqueado antes do envio.")
 
 
 class BatchDetail(BatchOut):
@@ -792,6 +797,9 @@ class BatchPage(BaseModel):
     page: int
     page_size: int
     total: int
+    view: str | None = Field(None, description="in_progress | attention | history | all")
+    counts: dict[str, int] | None = Field(None, description="Total de cada visão (um lote encerrado com rejeição "
+                                                            "pendente conta no histórico e em 'exigem atenção').")
 
 
 class CancelPendingOut(BaseModel):
@@ -917,6 +925,8 @@ class Dashboard(BaseModel):
     queue: dict[str, int]
     next_scheduled_at: datetime | None
     sync: SyncStatus
+    views: dict[str, dict[str, int]] | None = Field(None, description="Contagens pela classificação das listas: "
+                                                                      "drafts, batches e items (active/attention).")
 
 
 

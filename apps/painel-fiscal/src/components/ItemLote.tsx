@@ -58,6 +58,20 @@ export const ItemLote: React.FC<{ item: BatchItem; timezone?: string; companyId?
         </ul>
       )}
       {i.guidance && <p className="pf-pend-acao"><strong>O que fazer:</strong> {i.guidance}</p>}
+      {companyId && (i.document_id || (i.needs_attention && i.status === 'REJECTED' && i.draft && !i.draft.deleted)) && (
+        <div className="pf-pend-botoes">
+          {i.document_id && (
+            <a className="pf-pend-link" href={`/fiscal/?company_id=${encodeURIComponent(companyId)}&view=emitidas&doc=${encodeURIComponent(i.document_id)}`}>
+              Ver nota
+            </a>
+          )}
+          {i.needs_attention && i.status === 'REJECTED' && i.draft && !i.draft.deleted && (
+            <a className="pf-pend-link" href={`/fiscal/?company_id=${encodeURIComponent(companyId)}&view=rascunhos&draft=${encodeURIComponent(i.draft.id)}`}>
+              Abrir rascunho e pendências
+            </a>
+          )}
+        </div>
+      )}
       <details className="pf-pend-tecnico">
         <summary>Datas, referências e rascunho de origem</summary>
         <dl className="pf-dl">
@@ -72,10 +86,6 @@ export const ItemLote: React.FC<{ item: BatchItem; timezone?: string; companyId?
               : ' · não encontrado neste workspace'}
           </dd>
         </dl>
-        {i.document_id && companyId && (
-          <a className="pf-pend-link" href={`/fiscal/?company_id=${encodeURIComponent(companyId)}&view=emitidas`}
-            target="_blank" rel="noopener noreferrer">Abrir Notas emitidas (nova aba) ↗</a>
-        )}
       </details>
     </li>
   );

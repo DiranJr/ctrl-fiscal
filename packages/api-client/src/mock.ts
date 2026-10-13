@@ -15,6 +15,8 @@ import {
   DocumentFilter,
   ReviewDocumentRequest,
   Draft,
+  DraftView,
+  BatchView,
   DraftDeleted,
   CreateDraftRequest,
   UpdateDraftRequest,
@@ -988,8 +990,9 @@ export class MockFiscalApiClient implements IFiscalApiClient {
     return newDraft;
   }
 
-  async getDrafts(companyId: string, page = 1, pageSize = 25): Promise<PaginatedResponse<Draft>> {
-    const list = this.drafts.get(companyId) || [];
+  async getDrafts(companyId: string, page = 1, pageSize = 25, view: DraftView = 'pending'): Promise<PaginatedResponse<Draft>> {
+    const todos = this.drafts.get(companyId) || [];
+    const list = todos.filter((d) => view === 'all' || (view === 'issued') === (d.status === 'AUTHORIZED'));
     const start = (page - 1) * pageSize;
     return {
       items: list.slice(start, start + pageSize),
@@ -1288,7 +1291,7 @@ export class MockFiscalApiClient implements IFiscalApiClient {
     };
   }
 
-  async getBatches(companyId: string, page = 1, pageSize = 25): Promise<PaginatedResponse<Batch>> {
+  async getBatches(companyId: string, page = 1, pageSize = 25, _view: BatchView = 'all'): Promise<PaginatedResponse<Batch>> {
     const list = this.batches.get(companyId) || [];
     const start = (page - 1) * pageSize;
     return {
