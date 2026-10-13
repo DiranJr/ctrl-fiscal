@@ -54,6 +54,8 @@ class MeResponse(BaseModel):
     is_super_admin: bool = Field(False, description="Gestão global de usuários. NÃO dá acesso fiscal às empresas.")
     admin_company_ids: list[str] = Field(default_factory=list, description="Empresas em que o usuário é admin.")
     workspaces: list[dict] = Field(default_factory=list, description="Workspaces do usuário (um por empresa).")
+    can_create_workspace: bool = Field(False, description="Pode cadastrar workspaces novos (SUPER_ADMIN ou permissão "
+                                                          "create_workspace concedida pelo SUPER_ADMIN).")
 
 
 # ---------------------------------------------------------------- administração de usuários
@@ -100,6 +102,7 @@ class AdminUserOut(BaseModel):
     status: Literal["ACTIVE", "INACTIVE", "PENDING"]
     is_active: bool
     is_super_admin: bool
+    can_create_workspace: bool = Field(False, description="Permissão global de cadastrar workspaces novos.")
     version: int
     memberships: list[AdminMembershipOut] = Field(description="Somente vínculos dentro do escopo de quem consulta.")
     other_companies: int = Field(description="Vínculos fora do escopo do consultante (apenas a contagem).")

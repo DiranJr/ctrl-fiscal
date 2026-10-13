@@ -4,7 +4,11 @@ Invariantes (no banco e aqui, nunca só na interface):
 - workspaces.company_id único e companies.cnpj único ⇒ uma empresa por workspace e um workspace por CNPJ; a criação
   concorrente com o mesmo CNPJ falha na restrição única (409), sem estado parcial;
 - não há operação que troque a empresa (ou o CNPJ) de um workspace;
-- SUPER_ADMIN cria/administra workspaces, mas NÃO ganha acesso fiscal: operar exige vínculo explícito (membership);
+- criar workspace: SUPER_ADMIN ou usuário com a permissão GLOBAL create_workspace (concedida/revogada só pelo
+  SUPER_ADMIN e relida do banco, com a linha travada, a cada criação). O criador autorizado vira admin SOMENTE do
+  workspace criado; o SUPER_ADMIN não ganha acesso fiscal (pode indicar um administrador existente ou novo, com link de
+  ativação). Ativar/suspender continua exclusivo do SUPER_ADMIN;
+- empresa, workspace, usuário novo, vínculo e auditoria na MESMA transação: qualquer falha desfaz tudo;
 - um workspace em preparação (PREPARING) ou suspenso não transmite (o fiscal-api recusa o agendamento);
 - o certificado (um ativo por workspace) e a sua compatibilidade ficam no conector (nfse-api).
 """
@@ -25,7 +29,7 @@ from ctrl_common.problems import ProblemError, problem_responses, trace_id_for
 from ctrl_common.service_auth import service_headers
 
 from .app import CompanyAccess, CurrentUser, audit, company_access, ctx, current_user, db_session
-from .models import Company, Membership, ServiceProfile, Workspace
+from .models import Company, Membership, ServiceProfile, User, Workspace
 from .routes_fiscal_profile import missing_for_emission
 
 router = APIRouter(tags=["workspaces"])
@@ -78,9 +82,22 @@ class CompanyNew(Strict):
     timezone: str = Field("America/Sao_Paulo", max_length=64)
 
 
+class NewAdminUser(Strict):
+    name: str = Field(min_length=2, max_length=160)
+    email: str = Field(min_length=3, max_length=254, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+class WorkspaceAdmin(Strict):
+    """Administrador do novo workspace (só o SUPER_ADMIN indica): usuário existente OU conta nova (sem senha; link
+    de ativação de uso único)."""
+    user_id: str | None = Field(None, max_length=36)
+    new_user: NewAdminUser | None = None
+
+
 class WorkspaceCreate(Strict):
     name: str = Field(min_length=2, max_length=200)
     company: CompanyNew
+    admin: WorkspaceAdmin | None = None
 
 
 class WorkspacePatch(Strict):
@@ -93,42 +110,112 @@ def _require_super(cu: CurrentUser) -> None:
         raise ProblemError(403, "SUPER_ADMIN_REQUIRED", "Somente SUPER_ADMIN administra workspaces.")
 
 
-@router.get("/admin/workspaces", responses=ERRS)
+@router.get("/admin/workspaces", responses=ERRS,
+            summary="SUPER_ADMIN: todos os workspaces. Demais: só os que administra (vínculo com 'admin').")
 def admin_workspaces(cu: CurrentUser = Depends(current_user), s: Session = Depends(db_session)) -> list[dict]:
-    _require_super(cu)
-    return [workspace_out(w, c) for w, c in s.execute(
-        select(Workspace, Company).join(Company, Company.id == Workspace.company_id).order_by(Workspace.name)).all()]
+    q = select(Workspace, Company).join(Company, Company.id == Workspace.company_id).order_by(Workspace.name)
+    if not cu.user.is_super_admin:
+        meus = [m.company_id for m in s.scalars(select(Membership).where(Membership.user_id == cu.user.id))
+                if "admin" in (m.permissions or [])]
+        if not meus and not cu.user.can_create_workspace:
+            raise ProblemError(403, "ADMIN_FORBIDDEN", "Sem permissão para administrar ou criar workspaces.")
+        q = q.where(Workspace.company_id.in_(meus or ["-"]))
+    return [workspace_out(w, c) for w, c in s.execute(q).all()]
 
 
 @router.post("/admin/workspaces", status_code=201, responses=ERRS,
-             summary="Cria workspace em PREPARAÇÃO com a sua empresa (CNPJ único). Não cria vínculos nem certificado.")
+             summary="Cria workspace em PREPARAÇÃO com a sua empresa (CNPJ único), sem certificado, perfis aprovados ou "
+                     "transmissão. SUPER_ADMIN ou permissão create_workspace (o criador vira admin só deste workspace).")
 def create_workspace(body: WorkspaceCreate, request: Request, cu: CurrentUser = Depends(current_user),
                      s: Session = Depends(db_session)) -> dict:
-    _require_super(cu)
+    # Permissão relida do banco COM TRAVA: uma revogação concorrente já confirmada é vista aqui (sessões abertas não
+    # guardam a permissão).
+    ator = s.scalar(select(User).where(User.id == cu.user.id).with_for_update())
+    super_admin = bool(ator and ator.is_super_admin)
+    if ator is None or not (super_admin or ator.can_create_workspace):
+        raise ProblemError(403, "CREATE_WORKSPACE_FORBIDDEN", "Sem permissão para criar workspaces.")
+    if body.admin is not None and not super_admin:
+        raise ProblemError(403, "SUPER_ADMIN_REQUIRED", "Somente SUPER_ADMIN indica outro administrador na criação; "
+                                                        "você será o administrador deste workspace.")
+    if body.admin is not None and bool(body.admin.user_id) == bool(body.admin.new_user):
+        raise ProblemError(422, "ADMIN_CHOICE", "Indique um usuário existente OU os dados de um novo usuário.",
+                           errors=[{"field": "admin", "code": "ADMIN_CHOICE", "message": "Escolha uma opção."}])
     if not is_valid_cnpj(body.company.cnpj):
-        raise ProblemError(422, "CNPJ_INVALID", "CNPJ inválido.")
+        raise ProblemError(422, "CNPJ_INVALID", "CNPJ inválido.",
+                           errors=[{"field": "company.cnpj", "code": "CNPJ_INVALID", "message": "CNPJ inválido."}])
     if body.company.municipality_code and not dominios.municipio(body.company.municipality_code):
-        raise ProblemError(422, "MUNICIPALITY_NOT_IN_IBGE", "Município não existe na tabela IBGE (Anexo A).")
+        raise ProblemError(422, "MUNICIPALITY_NOT_IN_IBGE", "Município não existe na tabela IBGE (Anexo A).",
+                           errors=[{"field": "company.municipality_code", "code": "MUNICIPALITY_NOT_IN_IBGE",
+                                    "message": "Município não existe na tabela IBGE."}])
     now = ctx(request).clock.now()
+    dup = [{"field": "company.cnpj", "code": "CNPJ_ALREADY_IN_WORKSPACE", "message": "CNPJ já cadastrado em outro workspace."}]
     if s.scalar(select(Company.id).where(Company.cnpj == body.company.cnpj)):
-        raise ProblemError(409, "CNPJ_ALREADY_IN_WORKSPACE", "Já existe workspace para este CNPJ.")
+        raise ProblemError(409, "CNPJ_ALREADY_IN_WORKSPACE", "Já existe workspace para este CNPJ.", errors=dup)
+    alvo = None
+    if body.admin and body.admin.user_id:
+        alvo = s.get(User, body.admin.user_id)
+        if alvo is None or not alvo.is_active:
+            raise ProblemError(422, "ADMIN_USER_NOT_FOUND", "Usuário administrador não encontrado ou inativo.",
+                               errors=[{"field": "admin.user_id", "code": "ADMIN_USER_NOT_FOUND",
+                                        "message": "Usuário não encontrado ou inativo."}])
+    if body.admin and body.admin.new_user:
+        from sqlalchemy import func  # noqa: PLC0415
+
+        if s.scalar(select(User.id).where(func.lower(User.email) == body.admin.new_user.email.strip().lower())):
+            raise ProblemError(409, "EMAIL_IN_USE", "Já existe usuário com este e-mail: escolha-o como usuário existente.",
+                               errors=[{"field": "admin.new_user.email", "code": "EMAIL_IN_USE",
+                                        "message": "E-mail já cadastrado."}])
     c = Company(name=body.company.name.strip(), cnpj=body.company.cnpj, timezone=body.company.timezone,
                 nfse_environment="restricted", municipality_code=body.company.municipality_code,
                 adn_environments=[], is_active=True, created_at=now, updated_at=now)
     s.add(c)
+    link = None
     try:
         s.flush()
         w = Workspace(id=c.id, company_id=c.id, name=body.name.strip(), status="PREPARING", created_by=cu.user.id,
                       created_at=now, updated_at=now)
         s.add(w)
         s.flush()
-    except IntegrityError:  # corrida com o mesmo CNPJ: a restrição única decide; nada fica pela metade
+        from .routes_admin import PENDING_HASH, PERMISSIONS, issue_credential  # noqa: PLC0415
+
+        if body.admin and body.admin.new_user:
+            alvo = User(email=body.admin.new_user.email.strip().lower(), name=body.admin.new_user.name.strip(),
+                        password_hash=PENDING_HASH, is_active=True, is_super_admin=False, can_create_workspace=False,
+                        version=1, created_at=now, updated_at=now)
+            s.add(alvo)
+            s.flush()
+            link = issue_credential(s, alvo, "ACTIVATE", cu.user.id, now)  # sem senha automática
+            audit(s, now, "admin.user_created", actor_id=cu.user.id, target_type="user", target_id=alvo.id,
+                  details={"memberships": [{"company_id": c.id, "permissions": list(PERMISSIONS)}],
+                           "by_super_admin": True, "origin": "workspace.created"}, trace_id=trace_id_for(request))
+        if not super_admin:
+            alvo = ator  # criador autorizado: administrador SÓ deste workspace
+        if alvo is not None:
+            s.add(Membership(user_id=alvo.id, company_id=c.id, permissions=list(PERMISSIONS), created_at=now,
+                             updated_at=now))
+            s.flush()
+            audit(s, now, "admin.membership_set", actor_id=cu.user.id, company_id=c.id, target_type="user",
+                  target_id=alvo.id, details={"from": [], "to": list(PERMISSIONS), "origin": "workspace.created"},
+                  trace_id=trace_id_for(request))
+        audit(s, now, "workspace.created", actor_id=cu.user.id, company_id=c.id, target_type="workspace",
+              target_id=w.id, details={"status": "PREPARING", "by_super_admin": super_admin,
+                                       "admin_user_id": alvo.id if alvo is not None else None,
+                                       "admin_new_user": bool(body.admin and body.admin.new_user)},
+              trace_id=trace_id_for(request))
+        s.commit()
+    except IntegrityError:  # corrida (mesmo CNPJ ou e-mail): a restrição única decide; nada fica pela metade
         s.rollback()
-        raise ProblemError(409, "CNPJ_ALREADY_IN_WORKSPACE", "Já existe workspace para este CNPJ.")
-    audit(s, now, "workspace.created", actor_id=cu.user.id, company_id=c.id, target_type="workspace", target_id=w.id,
-          details={"status": "PREPARING"}, trace_id=trace_id_for(request))
-    s.commit()
-    return workspace_out(w, c)
+        if s.scalar(select(Company.id).where(Company.cnpj == body.company.cnpj)):
+            raise ProblemError(409, "CNPJ_ALREADY_IN_WORKSPACE", "Já existe workspace para este CNPJ.", errors=dup)
+        raise ProblemError(409, "CREATE_CONFLICT", "Conflito ao criar o workspace (dados criados ao mesmo tempo). "
+                                                  "Recarregue e tente de novo.")
+    except Exception:
+        s.rollback()  # qualquer falha desfaz empresa, workspace, usuário, vínculo e auditoria
+        raise
+    out = workspace_out(w, c, list(PERMISSIONS) if alvo is not None and alvo.id == cu.user.id else None)
+    out["admin_user_id"] = alvo.id if alvo is not None else None
+    out["credential_link"] = link.model_dump(mode="json") if link is not None else None
+    return out
 
 
 @router.patch("/admin/workspaces/{workspace_id}", responses=ERRS,

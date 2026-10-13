@@ -19,6 +19,8 @@ type Confirm =
   | { kind: 'remove-membership'; companyId: string; companyName: string }
   | { kind: 'grant-sa' }
   | { kind: 'revoke-sa' }
+  | { kind: 'grant-cw' }
+  | { kind: 'revoke-cw' }
   | { kind: 'revoke-sessions' }
   | { kind: 'credential-link' };
 
@@ -200,6 +202,12 @@ export const UserDetailDrawer: React.FC<{
       case 'revoke-sa':
         await run('super-admin', () => clients.core.setSuperAdmin(user.id, false), 'SUPER_ADMIN removido.');
         break;
+      case 'grant-cw':
+        await run('create-workspace', () => clients.core.setCreateWorkspacePermission(user.id, true), 'Criação de workspaces permitida.');
+        break;
+      case 'revoke-cw':
+        await run('create-workspace', () => clients.core.setCreateWorkspacePermission(user.id, false), 'Criação de workspaces revogada.');
+        break;
       case 'revoke-sessions':
         await run('sessions', () => clients.core.revokeUserSessions(user.id), 'Sessões encerradas. O usuário precisará entrar novamente.');
         break;
@@ -227,6 +235,10 @@ export const UserDetailDrawer: React.FC<{
         return { title: 'Conceder SUPER_ADMIN?', body: 'SUPER_ADMIN administra usuários de todas as empresas (cria, desativa, altera vínculos e concede SUPER_ADMIN). Ele NÃO dá acesso aos documentos fiscais das empresas: esse acesso continua dependendo dos vínculos.', action: 'Conceder SUPER_ADMIN', danger: false };
       case 'revoke-sa':
         return { title: 'Remover SUPER_ADMIN?', body: `${user.name} deixará de administrar usuários globalmente. Os vínculos com empresas não mudam.`, action: 'Remover SUPER_ADMIN', danger: true };
+      case 'grant-cw':
+        return { title: 'Permitir criar workspace?', body: `${user.name} poderá cadastrar empresas novas e será administrador somente dos workspaces que criar. Isto NÃO dá acesso aos workspaces existentes, NÃO torna SUPER_ADMIN e não permite ativar ou suspender workspaces.`, action: 'Permitir criar workspace', danger: false };
+      case 'revoke-cw':
+        return { title: 'Revogar criação de workspace?', body: `${user.name} não poderá criar novos workspaces a partir de agora (inclusive em sessões abertas). Os vínculos com workspaces já criados não mudam.`, action: 'Revogar', danger: true };
       case 'revoke-sessions':
         return { title: 'Encerrar sessões?', body: `Todas as sessões abertas de ${user.name} serão encerradas e ele precisará entrar novamente em todos os dispositivos.`, action: 'Encerrar sessões', danger: true };
       case 'credential-link':
@@ -407,6 +419,23 @@ export const UserDetailDrawer: React.FC<{
                       onClick={() => setConfirm({ kind: 'grant-sa' })}>Conceder SUPER_ADMIN</Button>
                   )}
                 </div>
+              </Section>
+            )}
+
+            {meta.is_super_admin && !user.is_super_admin && (
+              <Section id="pf-admin-sec-cw" title="Criação de workspaces">
+                <Note>
+                  Permite cadastrar empresas novas; quem cria vira administrador <strong>somente</strong> do workspace criado.
+                  Não dá acesso aos workspaces existentes. Somente o SUPER_ADMIN concede ou revoga.
+                </Note>
+                {!user.can_create_workspace && user.status !== 'ACTIVE' && (
+                  <Note>Só é possível conceder a uma conta ativa que já definiu a senha.</Note>
+                )}
+                <label className="pf-check">
+                  <input type="checkbox" checked={!!user.can_create_workspace} disabled={!!busy || (!user.can_create_workspace && user.status !== 'ACTIVE')}
+                    onChange={(e) => setConfirm({ kind: e.target.checked ? 'grant-cw' : 'revoke-cw' })} />
+                  Permitir criar workspace
+                </label>
               </Section>
             )}
 

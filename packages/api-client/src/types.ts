@@ -16,6 +16,20 @@ export interface User {
   admin_company_ids?: string[];
   /** GET /auth/me: workspaces do usuário (um por empresa/CNPJ) com as permissões DAQUELE vínculo. */
   workspaces?: Workspace[];
+  /** GET /auth/me: pode cadastrar workspaces novos (SUPER_ADMIN ou permissão create_workspace). */
+  can_create_workspace?: boolean;
+}
+
+/** POST /admin/workspaces: empresa nova em PREPARAÇÃO. Só o SUPER_ADMIN indica outro administrador. */
+export interface WorkspaceCreateRequest {
+  name: string;
+  company: { cnpj: string; name: string; municipality_code?: string | null; timezone?: string };
+  admin?: { user_id?: string | null; new_user?: { name: string; email: string } | null } | null;
+}
+export interface WorkspaceCreated extends Workspace {
+  admin_user_id: string | null;
+  /** Link de ativação (uso único) quando o administrador é um usuário novo; exibido uma vez. */
+  credential_link: CredentialLink | null;
 }
 
 /** Workspace = contexto de trabalho de UMA empresa (CNPJ), com o mesmo identificador da empresa. */
@@ -1143,6 +1157,8 @@ export interface AdminUser {
   status: AdminUserStatus | string;
   is_active: boolean;
   is_super_admin: boolean;
+  /** Permissão global de cadastrar workspaces (só o SUPER_ADMIN concede). */
+  can_create_workspace?: boolean;
   version: number;
   /** Somente vínculos dentro do escopo de quem consulta. */
   memberships: AdminMembership[];

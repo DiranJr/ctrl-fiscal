@@ -272,6 +272,7 @@ def me(cu: CurrentUser = Depends(current_user), s: Session = Depends(db_session)
             for co, m in rows
         ],
         is_super_admin=bool(cu.user.is_super_admin),
+        can_create_workspace=bool(cu.user.is_super_admin or cu.user.can_create_workspace),
         admin_company_ids=[co.id for co, m in rows if "admin" in (m.permissions or [])],
         workspaces=_workspaces(s, rows),
     )

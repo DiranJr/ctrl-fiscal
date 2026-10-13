@@ -131,7 +131,8 @@ def user_out(s: Session, sc: AdminScope, u: User, now: datetime) -> dict:
     hidden = 0 if sc.super_admin else len(_memberships(s, u.id)) - len(ms)
     return {
         "id": u.id, "name": u.name, "email": u.email, "status": _status(u), "is_active": u.is_active,
-        "is_super_admin": bool(u.is_super_admin), "version": u.version or 1,
+        "is_super_admin": bool(u.is_super_admin), "can_create_workspace": bool(u.can_create_workspace),
+        "version": u.version or 1,
         "memberships": [{"company_id": c.id, "company_name": c.name, "company_cnpj": c.cnpj, "company_active": c.is_active,
                          "permissions": [p for p in PERMISSIONS if p in (m.permissions or [])]} for m, c in ms],
         "other_companies": hidden,
@@ -399,6 +400,30 @@ def set_super_admin(user_id: str, body: SuperAdminIn, request: Request, sc: Admi
     revoked = 0 if body.enabled else revoke_sessions(s, u.id, now, "super_admin_removed")
     audit(s, now, "admin.super_admin_granted" if body.enabled else "admin.super_admin_revoked", actor_id=sc.actor.id,
           target_type="user", target_id=u.id, trace_id=trace_id_for(request), details={"sessions_revoked": revoked})
+    s.commit()
+    return user_out(s, sc, u, now)
+
+
+@router.put("/users/{user_id}/create-workspace", response_model=AdminUserOut, responses=ERRS,
+            summary="Concede ou revoga a permissão global create_workspace (somente SUPER_ADMIN).")
+def set_create_workspace(user_id: str, body: SuperAdminIn, request: Request, sc: AdminScope = Depends(admin_scope),
+                         s: Session = Depends(db_session)) -> dict:
+    """Só o SUPER_ADMIN concede/revoga — ninguém concede a si mesmo nem a outros por esta permissão. Revogar vale na
+    próxima requisição (a permissão é relida do banco a cada criação), inclusive em sessões abertas; os vínculos com
+    workspaces já criados não mudam (gestão separada)."""
+    now = ctx(request).clock.now()
+    if not sc.super_admin:
+        raise ProblemError(403, "SUPER_ADMIN_REQUIRED", "Somente SUPER_ADMIN concede ou revoga a criação de workspaces.")
+    u = _get_user(s, sc, user_id, lock=True)
+    if bool(u.can_create_workspace) == body.enabled:
+        return user_out(s, sc, u, now)
+    if body.enabled and (not u.is_active or u.password_hash == PENDING_HASH):
+        raise ProblemError(409, "USER_NOT_ACTIVE", "Conceda apenas a conta ativa com senha definida.")
+    u.can_create_workspace = body.enabled
+    u.version = (u.version or 1) + 1
+    u.updated_at = now
+    audit(s, now, "admin.create_workspace_granted" if body.enabled else "admin.create_workspace_revoked",
+          actor_id=sc.actor.id, target_type="user", target_id=u.id, trace_id=trace_id_for(request), details={})
     s.commit()
     return user_out(s, sc, u, now)
 

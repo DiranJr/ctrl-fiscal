@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, Date, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Date, ForeignKey, Index, Integer, String, Text, UniqueConstraint, false
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from ctrl_common.db import JsonType, UTCDateTime, new_id
@@ -21,6 +21,9 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     # Papel GLOBAL de gestão de usuários. Não concede acesso fiscal: documentos exigem Membership na empresa.
     is_super_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Permissão GLOBAL de cadastrar empresas/workspaces novos (concedida só pelo SUPER_ADMIN). O criador vira admin
+    # apenas do workspace criado; não dá acesso aos existentes nem ativa/suspende workspaces.
+    can_create_workspace: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     password_set_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime())

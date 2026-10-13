@@ -22,10 +22,17 @@ const MENU = [
   { id: 'configuracoes', label: 'Configurações', icon: 'settings' },
 ];
 
-/** Seção "Administração": exibida só para SUPER_ADMIN ou admin de alguma empresa (ocultar é cosmético; o backend valida). */
+/** Seção "Administração" (ocultar é cosmético; o backend valida cada operação):
+ * Usuários — SUPER_ADMIN ou admin de alguma empresa; Workspaces — esses e quem tem a permissão create_workspace. */
 const ADMIN_MENU = [
   { id: 'admin-usuarios', label: 'Usuários', icon: 'users' },
+  { id: 'admin-workspaces', label: 'Workspaces', icon: 'file' },
 ];
+type AdminUserLike = { is_super_admin?: boolean; admin_company_ids?: string[]; can_create_workspace?: boolean } | null;
+const adminItems = (u: AdminUserLike) => ADMIN_MENU.filter((i) => {
+  const adm = !!u && (!!u.is_super_admin || (u.admin_company_ids?.length ?? 0) > 0);
+  return i.id === 'admin-usuarios' ? adm : adm || !!u?.can_create_workspace;
+});
 
 function formatCnpj(v?: string | null): string {
   const d = (v || '').replace(/[^0-9A-Za-z]/g, '').toUpperCase();
@@ -91,8 +98,8 @@ function readCollapsed(): boolean {
 
 type MenuItem = { id: string; label: string; icon: string };
 
-const NavList: React.FC<{ current: string; collapsed: boolean; onGo: (id: string) => void; showAdmin?: boolean; hasCompany?: boolean }> = ({
-  current, collapsed, onGo, showAdmin = false, hasCompany = true,
+const NavList: React.FC<{ current: string; collapsed: boolean; onGo: (id: string) => void; showAdmin?: boolean; hasCompany?: boolean; adminMenu?: MenuItem[] }> = ({
+  current, collapsed, onGo, showAdmin = false, hasCompany = true, adminMenu = [],
 }) => {
   const adminHeadingId = React.useId(); // a lista aparece na lateral e no menu móvel: ids distintos
   return (
@@ -105,7 +112,7 @@ const NavList: React.FC<{ current: string; collapsed: boolean; onGo: (id: string
             textTransform: 'uppercase', color: 'var(--color-text-subtle)' }}>
           Administração
         </div>
-        <NavItems items={ADMIN_MENU} current={current} collapsed={collapsed} onGo={onGo} labelledBy={adminHeadingId} />
+        <NavItems items={adminMenu} current={current} collapsed={collapsed} onGo={onGo} labelledBy={adminHeadingId} />
       </div>
     )}
   </>
@@ -148,7 +155,8 @@ export const Layout: React.FC<LayoutProps> = ({ currentRoute, onRouteChange, chi
     integrationStatus?.simulated ?? dashboardCounters?.simulated ?? true
   );
   const [collapsed, setCollapsed] = useState<boolean>(readCollapsed);
-  const showAdmin = !!user && (!!user.is_super_admin || (user.admin_company_ids?.length ?? 0) > 0);
+  const adminMenu = adminItems(user as AdminUserLike);
+  const showAdmin = adminMenu.length > 0;
   const hasCompany = companies.length > 0;
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -231,7 +239,7 @@ export const Layout: React.FC<LayoutProps> = ({ currentRoute, onRouteChange, chi
 
       <div className="pf-body">
         <nav aria-label="Navegação principal" className="pf-sidebar ui-only-desktop" data-collapsed={collapsed ? 'true' : undefined}>
-          <NavList current={currentRoute} collapsed={collapsed} onGo={go} showAdmin={showAdmin} hasCompany={hasCompany} />
+          <NavList current={currentRoute} collapsed={collapsed} onGo={go} showAdmin={showAdmin} hasCompany={hasCompany} adminMenu={adminMenu} />
           {!collapsed && hasCompany && (
             <div className="pf-sidebar-note">
               <div style={{ fontWeight: 600, color: 'var(--color-text-muted)' }}>Fuso horário da empresa</div>
@@ -242,7 +250,7 @@ export const Layout: React.FC<LayoutProps> = ({ currentRoute, onRouteChange, chi
 
         <Drawer isOpen={mobileOpen} onClose={() => setMobileOpen(false)} title="Menu" side="left" width="290px">
           <nav aria-label="Navegação principal">
-            <NavList current={currentRoute} collapsed={false} onGo={go} showAdmin={showAdmin} hasCompany={hasCompany} />
+            <NavList current={currentRoute} collapsed={false} onGo={go} showAdmin={showAdmin} hasCompany={hasCompany} adminMenu={adminMenu} />
           </nav>
         </Drawer>
 

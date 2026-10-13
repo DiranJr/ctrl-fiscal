@@ -51,6 +51,8 @@ import {
   UpdateAdminUserRequest,
   CredentialLink,
   Workspace,
+  WorkspaceCreateRequest,
+  WorkspaceCreated,
   Readiness,
   ServiceProfile,
   ServiceProfileInput,
@@ -101,6 +103,13 @@ export interface ICoreApiClient {
   setAdminMembership(userId: string, companyId: string, permissions: string[]): Promise<AdminUser>;
   removeAdminMembership(userId: string, companyId: string): Promise<AdminUser>;
   setSuperAdmin(userId: string, enabled: boolean): Promise<AdminUser>;
+  /** Permissão global create_workspace (somente SUPER_ADMIN concede/revoga). */
+  setCreateWorkspacePermission(userId: string, enabled: boolean): Promise<AdminUser>;
+  /** SUPER_ADMIN: todos; demais: os que administram. */
+  listAdminWorkspaces(): Promise<Workspace[]>;
+  createWorkspace(req: WorkspaceCreateRequest): Promise<WorkspaceCreated>;
+  /** Ativar/suspender (somente SUPER_ADMIN). */
+  updateWorkspace(workspaceId: string, req: { name?: string; status?: string }): Promise<Workspace>;
   revokeUserSessions(userId: string): Promise<AdminUser>;
   /** Link de ativação/redefinição (exibir uma única vez; nunca armazenar nem registrar em log). */
   issueCredentialLink(userId: string): Promise<CredentialLink>;
@@ -649,6 +658,28 @@ export class HttpCoreApiClient implements ICoreApiClient {
       `/admin/users/${encodeURIComponent(userId)}/memberships/${encodeURIComponent(companyId)}`,
       { method: 'DELETE' }
     );
+  }
+
+  async setCreateWorkspacePermission(userId: string, enabled: boolean): Promise<AdminUser> {
+    return this.request<AdminUser>(`/admin/users/${encodeURIComponent(userId)}/create-workspace`, {
+      method: 'PUT',
+      body: JSON.stringify({ enabled }),
+    });
+  }
+
+  async listAdminWorkspaces(): Promise<Workspace[]> {
+    return this.request<Workspace[]>('/admin/workspaces');
+  }
+
+  async createWorkspace(req: WorkspaceCreateRequest): Promise<WorkspaceCreated> {
+    return this.request<WorkspaceCreated>('/admin/workspaces', { method: 'POST', body: JSON.stringify(req) });
+  }
+
+  async updateWorkspace(workspaceId: string, req: { name?: string; status?: string }): Promise<Workspace> {
+    return this.request<Workspace>(`/admin/workspaces/${encodeURIComponent(workspaceId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(req),
+    });
   }
 
   async setSuperAdmin(userId: string, enabled: boolean): Promise<AdminUser> {

@@ -15,12 +15,13 @@ const SyncPage = lazy(() => import('./pages/SyncPage.js').then((m) => ({ default
 const CustomersPage = lazy(() => import('./pages/CustomersPage.js').then((m) => ({ default: m.CustomersPage })));
 const SettingsPage = lazy(() => import('./pages/SettingsPage.js').then((m) => ({ default: m.SettingsPage })));
 const AdminUsersPage = lazy(() => import('./pages/AdminUsersPage.js').then((m) => ({ default: m.AdminUsersPage })));
+const AdminWorkspacesPage = lazy(() => import('./pages/AdminWorkspacesPage.js').then((m) => ({ default: m.AdminWorkspacesPage })));
 
 const ROUTES = ['dashboard', 'nova-nfse', 'rascunhos', 'agendamentos', 'emitidas', 'recebidas', 'importar-exportar',
-  'sincronizacao', 'clientes', 'configuracoes', 'admin-usuarios'];
+  'sincronizacao', 'clientes', 'configuracoes', 'admin-usuarios', 'admin-workspaces'];
 
 /** Telas que não dependem de empresa ativa (ex.: SUPER_ADMIN sem vínculo com empresas). */
-const COMPANYLESS_ROUTES = ['admin-usuarios'];
+const COMPANYLESS_ROUTES = ['admin-usuarios', 'admin-workspaces'];
 
 function getInitialRoute(): string {
   if (typeof window !== 'undefined') {
@@ -92,6 +93,7 @@ const PainelFiscalContent: React.FC = () => {
       case 'clientes': return <CustomersPage />;
       case 'configuracoes': return <SettingsPage />;
       case 'admin-usuarios': return <AdminUsersPage />;
+      case 'admin-workspaces': return <AdminWorkspacesPage />;
       default: return <DashboardPage onNavigate={handleRouteChange} />;
     }
   })();

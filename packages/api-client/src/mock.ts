@@ -50,6 +50,8 @@ import {
   UpdateAdminUserRequest,
   CredentialLink,
   Workspace,
+  WorkspaceCreateRequest,
+  WorkspaceCreated,
   Readiness,
   ServiceProfile,
   ServiceProfileInput,
@@ -562,6 +564,26 @@ export class MockCoreApiClient implements ICoreApiClient {
     const u = this.findAdminUser(userId);
     u.memberships = u.memberships.filter((m) => m.company_id !== companyId);
     return this.touch(u);
+  }
+
+  async setCreateWorkspacePermission(userId: string, enabled: boolean): Promise<AdminUser> {
+    const u = this.findAdminUser(userId);
+    u.can_create_workspace = enabled;
+    return this.touch(u);
+  }
+
+  async listAdminWorkspaces(): Promise<Workspace[]> {
+    return [];
+  }
+
+  async createWorkspace(_req: WorkspaceCreateRequest): Promise<WorkspaceCreated> {
+    throw new ProblemDetailsException({ type: 'about:blank', title: 'Indisponível', status: 501,
+      detail: 'Criação de workspace não disponível no modo de demonstração.' });
+  }
+
+  async updateWorkspace(_workspaceId: string, _req: { name?: string; status?: string }): Promise<Workspace> {
+    throw new ProblemDetailsException({ type: 'about:blank', title: 'Indisponível', status: 501,
+      detail: 'Não disponível no modo de demonstração.' });
   }
 
   async setSuperAdmin(userId: string, enabled: boolean): Promise<AdminUser> {
