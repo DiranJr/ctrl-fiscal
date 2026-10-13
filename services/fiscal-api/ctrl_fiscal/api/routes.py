@@ -438,7 +438,10 @@ def validate(draft_id: str, request: Request, cc: CompanyCtx = Depends(company_c
                                      production_emission_enabled=c.settings.production_emission_enabled)
     drafts_d.record_validation(d, issues, c.clock.now())  # vale só para a versão atual; não autoriza nada
     s.commit()
-    return {"valid": not any(i["severity"] == "error" for i in issues), "issues": issues}
+    from ..domain import pendencias  # noqa: PLC0415
+
+    return {"valid": not any(i["severity"] == "error" for i in issues), "issues": pendencias.detalhar_todas(issues, d),
+            "validated_version": d.version}
 
 
 @router.post("/retention-preview", response_model=sc.RetentionPreviewOut, responses=E, tags=["drafts"],

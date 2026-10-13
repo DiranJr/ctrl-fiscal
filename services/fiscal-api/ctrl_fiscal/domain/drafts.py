@@ -18,7 +18,7 @@ from ctrl_common.fiscal_types import is_valid_cnpj, is_valid_cpf
 
 from ..clients import CompanyInfo, CoreClient
 from ..models import BatchItem, Document, Draft
-from . import retencoes
+from . import pendencias, retencoes
 from .common import DomainError, audit, money
 from .regras_dps import dominio_issues, negocio_issues
 
@@ -479,10 +479,10 @@ def patch_draft(
         merged.update({k: v for k, v in changes["tax_settings"].items() if k in TAX_KEYS})
         merged["ibs_cbs"] = _ibs(merged.get("ibs_cbs"))
         d.tax_settings = merged
-    # Qualquer alteração invalida a validação anterior: o conteúdo atual precisa ser validado de novo.
+    # Qualquer alteração invalida a validação anterior: o conteúdo atual precisa ser validado de novo. As pendências
+    # antigas são descartadas; a versão/data validadas ficam para a tela mostrar "validado na vN, editado depois"
+    # (a situação é NOT_VALIDATED porque validated_version deixa de ser igual à versão).
     d.issues = []
-    d.validated_version = None
-    d.validated_at = None
     if d.status == "REJECTED":
         d.status = "DRAFT"  # correção após rejeição fiscal confirmada
     d.version += 1
@@ -811,7 +811,7 @@ def draft_out(d: Draft) -> dict:
         "conditional_discount": money(d.discount_conditional),
         "tax_settings": {k: (d.tax_settings or {}).get(k) for k in TAX_KEYS},
         "retention_summary": retention_summary(d),
-        "issues": (d.issues or []) if d.validated_version == d.version else [],
+        "issues": pendencias.detalhar_todas(d.issues, d) if d.validated_version == d.version else [],
         "validation": validation_state(d),
         "editable": d.status in EDITABLE_STATUSES,
         "environment": d.environment,

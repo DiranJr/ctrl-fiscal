@@ -5,6 +5,7 @@ import { ObraFields, ObraState, EMPTY_OBRA, obraFromService, obraToService, vali
 import { InfoComplFields, InfoComplState, EMPTY_INFO_COMPL, infoComplFromService, infoComplToPayload, validateInfoCompl } from '../components/InfoComplFields.js';
 import { ServiceProfilePicker } from '../components/ServiceProfilePicker.js';
 import { RevisaoNfse, ConfirmacaoRevisao } from '../components/RevisaoNfse.js';
+import { PendenciasRascunho } from '../components/PendenciasRascunho.js';
 import { ConfirmacaoProducao, montarConfirmacaoProducao, ModoEmissao } from '../components/ConfirmacaoProducao.js';
 import { OperacaoTributaria } from '../components/OperacaoTributaria.js';
 import { ScreenSection } from '../components/screen/ScreenSection.js';
@@ -817,18 +818,14 @@ export const NovaNfsePage: React.FC<{ onNavigate: (route: string) => void }> = (
 
       {/* Exibição de Issues da Pré-validação */}
       {validationIssues.length > 0 && (
-        <Alert
-          variant={validationIssues.some((i) => i.severity === 'error') ? 'error' : 'warning'}
-          title={`Apontamentos da Pré-Validação da DPS (${validationIssues.length}):`}
-        >
-          <ul style={{ margin: '0.5rem 0 0 1rem', padding: 0, fontSize: '0.8125rem' }}>
-            {validationIssues.map((issue, idx) => (
-              <li key={idx}>
-                <strong>[{issue.severity.toUpperCase()}] {issue.field}:</strong> {issue.message} (Código: <code>{issue.code}</code>)
-              </li>
-            ))}
-          </ul>
-        </Alert>
+        <div className="pf-subpanel">
+          <PendenciasRascunho
+            issues={validationIssues}
+            companyId={currentCompany?.id}
+            validatedVersion={activeDraft?.version ?? null}
+            currentVersion={activeDraft?.version ?? null}
+          />
+        </div>
       )}
 
       {/* STEP 1: PREENCHER */}

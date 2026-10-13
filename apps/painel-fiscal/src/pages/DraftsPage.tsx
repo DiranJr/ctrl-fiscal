@@ -8,6 +8,7 @@ import { RevisaoNfse, ConfirmacaoRevisao } from '../components/RevisaoNfse.js';
 import { ConfirmacaoProducao, montarConfirmacaoProducao, ModoEmissao } from '../components/ConfirmacaoProducao.js';
 import { OperacaoTributaria } from '../components/OperacaoTributaria.js';
 import { useFiscal, logSafe } from '../context/FiscalContext.js';
+import { PendenciasRascunho } from '../components/PendenciasRascunho.js';
 import { useUnsavedChanges } from '@ctrl-fiscal/ui';
 import {
   Table,
@@ -39,6 +40,28 @@ import { TributosRetencoesForm, TributosRetencoesState } from '../components/Tri
 import { CanonicalRetentionSummaryCard } from '../components/CanonicalRetentionSummaryCard.js';
 import { useCanonicalRetentions } from '../components/useCanonicalRetentions.js';
 
+/** Campo devolvido pelo servidor -> trecho do rótulo do controle no editor (o rótulo traz a tag XML entre parênteses). */
+const ROTULO_DO_CAMPO: [string, string][] = [
+  ['service.description', 'xDescServ'], ['service.national_code', 'cTribNac'], ['service.municipal_code', 'cTribMun'],
+  ['service.nbs_code', 'cNBS'], ['service.location_code', 'Local da prestação'], ['service.obra_code', 'cObra'],
+  ['service.obra_property_registration', 'inscImobFisc'], ['service.obra', 'Identificação da obra'],
+  ['competence', 'Competência'], ['service_date', 'dCompet'], ['amount', 'Valor Total do Serviço'],
+  ['deductions', 'Deduções'], ['unconditional_discount', 'Desconto Incondicionado'],
+  ['conditional_discount', 'Desconto Condicionado'], ['customer_id', 'Tomador do Serviço'],
+  ['tax_settings.issqn_taxation', 'tribISSQN'], ['tax_settings.iss_retention', 'tpRetISSQN'],
+  ['tax_settings.iss_rate', 'Alíquota do ISS'], ['tax_settings.immunity_type', 'tpImunidade'],
+  ['tax_settings.irrf_withheld', 'vRetIRRF'], ['tax_settings.inss_withheld', 'vRetCP'],
+  ['tax_settings.csll_withheld', 'vRetCSLL'], ['tax_settings.pis_cofins_retention', 'tpRetPisCofins'],
+  ['tax_settings.pis_cofins_cst', 'PIS/COFINS (CST)'], ['tax_settings.pis_cofins_base', 'Base de Cálculo'],
+  ['tax_settings.approx_tax', 'Modo de Informação'], ['tax_settings.ibs_cbs.operation_indicator', 'cIndOp'],
+  ['tax_settings.ibs_cbs.class_code', 'cClassTrib'], ['tax_settings.ibs_cbs', 'cIndOp'],
+];
+const rotuloDoCampo = (field: string): string | null => {
+  const achado = ROTULO_DO_CAMPO.filter(([k]) => field === k || field.startsWith(`${k}.`) || field.startsWith(`${k}[`))
+    .sort((a, b) => b[0].length - a[0].length)[0];
+  return achado ? achado[1] : null;
+};
+
 export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ onNavigate }) => {
   const { currentCompany, clients, showToast, refreshCounters, setLeaveGuard } = useFiscal();
 
@@ -69,6 +92,12 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
   const [deletingDraft, setDeletingDraft] = useState<Draft | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  // Painel persistente de pendências (lista) e validação dentro do editor.
+  const [pendDraftId, setPendDraftId] = useState<string | null>(null);
+  const [pendError, setPendError] = useState<string | null>(null);
+  const [editValidating, setEditValidating] = useState(false);
+  const [editValidateError, setEditValidateError] = useState<string | null>(null);
+  const editorRef = React.useRef<HTMLDivElement | null>(null);
   const canPrepare = !!currentCompany?.permissions?.includes('prepare');
   // Só o que nunca entrou na fila (ou foi retirado antes do envio); o servidor confere de novo, com trava.
   const isDeletable = (d: Draft) => (d.status === 'DRAFT' || d.status === 'WITHDRAWN') && !d.current_item_id;
@@ -260,10 +289,13 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
     if (!currentCompany) return;
     setValidatingDraftId(draftId);
     try {
+      setPendError(null);
       const res = await clients.fiscal.validateDraft(currentCompany.id, draftId);
       const newMap = new Map(draftIssuesMap);
       newMap.set(draftId, res.issues);
       setDraftIssuesMap(newMap);
+      await loadDrafts(); // pendências, versão validada e situação vêm do servidor
+      setPendDraftId(draftId);
 
       // Limpa marcação de revalidação pendente após rodar validação
       setEditedDraftIds((prev) => {
@@ -272,13 +304,15 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
         return next;
       });
 
-      if (res.valid) {
-        showToast('Rascunho validado sem erros locais!', 'success');
-      } else {
-        showToast(`Rascunho possui ${res.issues.length} pendência(s).`, 'error');
-      }
+      const bloqueios = res.issues.filter((i) => i.severity === 'error').length;
+      const avisos = res.issues.filter((i) => i.severity === 'warning').length;
+      showToast(res.valid
+        ? `Validação concluída: nenhum bloqueio${avisos ? ` (${avisos} aviso(s))` : ''}.`
+        : `Validação concluída: ${bloqueios} bloqueio(s) e ${avisos} aviso(s) — veja o detalhamento.`, res.valid ? 'success' : 'warning');
     } catch (err: any) {
-      showToast(err.message || 'Falha na validação do rascunho.', 'error');
+      // Falha da API: o painel abre com o erro e mantém o que já se sabia da última validação.
+      setPendError(err?.message || 'Falha na validação do rascunho.');
+      setPendDraftId(draftId);
     } finally {
       setValidatingDraftId(null);
     }
@@ -382,6 +416,47 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
       if (isSameCompany(companyId)) showToast(err.message || 'Falha ao retirar rascunho da fila.', 'error');
     } finally {
       setWithdrawingDraftId(null);
+    }
+  };
+
+  const irAoCampo = (field: string, label?: string | null) => {
+    const aba = tabOfField(field);
+    setActiveTab(aba);
+    const trecho = rotuloDoCampo(field) || (label || '').replace(/\s*\(.*\)\s*$/, '');
+    window.setTimeout(() => {
+      const raiz = editorRef.current;
+      const rotulo = raiz && trecho
+        ? Array.from(raiz.querySelectorAll('label')).find((l) => (l.textContent || '').toLowerCase().includes(trecho.toLowerCase()))
+        : null;
+      const alvo = (rotulo?.htmlFor ? document.getElementById(rotulo.htmlFor) : null) as HTMLElement | null;
+      const foco = alvo || (rotulo as HTMLElement | null);
+      if (!foco) {
+        showToast(`“${label || field}”: confira a aba aberta do editor.`, 'info');
+        return;
+      }
+      foco.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      if (alvo) alvo.focus({ preventScroll: true });
+      foco.classList.add('pf-campo-destacado');
+      window.setTimeout(() => foco.classList.remove('pf-campo-destacado'), 2500);
+    }, 120);
+  };
+
+  const handleValidateInEditor = async () => {
+    if (!currentCompany || !editingDraft) return;
+    const companyId = currentCompany.id;
+    setEditValidating(true);
+    setEditValidateError(null);
+    try {
+      await clients.fiscal.validateDraft(companyId, editingDraft.id);
+      const latest = await clients.fiscal.getDraft(companyId, editingDraft.id);
+      if (!isSameCompany(companyId)) return;
+      // Só a situação da validação muda (validar não edita o rascunho); o formulário em edição é preservado.
+      setEditingDraft((prev) => (prev ? { ...prev, issues: latest.issues, validation: latest.validation, version: latest.version } : prev));
+      await loadDrafts();
+    } catch (err: any) {
+      if (isSameCompany(companyId)) setEditValidateError(err?.message || 'Falha na validação do rascunho.');
+    } finally {
+      setEditValidating(false);
     }
   };
 
@@ -961,6 +1036,20 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
             >
               ✓ Validar
             </Button>
+            {d.validation?.validated_version != null && (
+              <Button
+                size="sm"
+                variant="ghost"
+                title="Ver o detalhamento das pendências da última validação"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setPendError(null);
+                  setPendDraftId(d.id);
+                }}
+              >
+                ☰ Ver pendências
+              </Button>
+            )}
             <Button
               size="sm"
               variant="outline"
@@ -1065,7 +1154,7 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
             </div>
           }
         >
-          <div className="pf-form pf-form-stack" onChangeCapture={(e) => {
+          <div ref={editorRef} className="pf-form pf-form-stack" onChangeCapture={(e) => {
             // Marcações do painel da configuração da operação não editam o rascunho.
             if ((e.target as HTMLElement).closest?.('[data-no-dirty]')) return;
             if (!editDirtyRef.current) setEditDirty(true);
@@ -1086,6 +1175,34 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
                 )}
               </Alert>
             )}
+
+            <details className="pf-subpanel" open={(editingDraft.issues || []).some((i) => i.severity === 'error') || undefined}>
+              <summary>
+                <strong>Pendências da validação</strong>{' '}
+                <span className="pf-help">
+                  {editingDraft.validation?.validated_version == null
+                    ? '(não validado)'
+                    : `(${(editingDraft.issues || []).filter((i) => i.severity === 'error').length} bloqueio(s), `
+                      + `${(editingDraft.issues || []).filter((i) => i.severity === 'warning').length} aviso(s) · v${editingDraft.validation.validated_version})`}
+                </span>
+              </summary>
+              <div style={{ marginTop: '0.75rem' }} data-no-dirty>
+                <PendenciasRascunho
+                  issues={editingDraft.issues || []}
+                  companyId={currentCompany?.id}
+                  validatedVersion={editingDraft.validation?.validated_version ?? null}
+                  validatedAt={editingDraft.validation?.validated_at ?? null}
+                  currentVersion={editingDraft.version}
+                  validated={editingDraft.validation?.validated_version != null}
+                  dirty={editDirty}
+                  onGoToField={irAoCampo}
+                  onRevalidate={handleValidateInEditor}
+                  isRevalidating={editValidating}
+                  error={editValidateError}
+                  compact
+                />
+              </div>
+            </details>
 
             {/* Navegação por Abas das Seções (botões; o texto é usado pelos testes de interface) */}
             <div className="pf-tabs">
@@ -1431,6 +1548,44 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
         </Modal>
       )}
 
+      {/* Painel persistente das pendências do rascunho (fica aberto até ser fechado). */}
+      {pendDraftId && (() => {
+        const pd = drafts.find((x) => x.id === pendDraftId);
+        if (!pd) return null;
+        const podeEditar = pd.status === 'DRAFT' || pd.status === 'REJECTED';
+        return (
+          <Modal
+            isOpen={true}
+            onClose={() => setPendDraftId(null)}
+            title="Pendências do rascunho"
+            description={`${pd.customer?.name || 'Tomador'} · ${formatCurrencyPtBr(pd.amount)} · competência ${pd.competence}`}
+            maxWidth="820px"
+            footer={
+              <div className="pf-actions-end">
+                {podeEditar && (
+                  <Button variant="outline" onClick={() => { setPendDraftId(null); handleOpenEdit(pd); }}>
+                    ✏️ Abrir no editor
+                  </Button>
+                )}
+                <Button variant="primary" onClick={() => setPendDraftId(null)}>Fechar</Button>
+              </div>
+            }
+          >
+            <PendenciasRascunho
+              issues={pd.issues || []}
+              companyId={currentCompany?.id}
+              validatedVersion={pd.validation?.validated_version ?? null}
+              validatedAt={pd.validation?.validated_at ?? null}
+              currentVersion={pd.version}
+              validated={pd.validation?.status !== 'NOT_VALIDATED' || pd.validation?.validated_version != null}
+              onRevalidate={podeEditar ? () => handleValidateDraft(pd.id) : undefined}
+              isRevalidating={validatingDraftId === pd.id}
+              error={pendError}
+            />
+          </Modal>
+        );
+      })()}
+
       {/* Modal de Agendamento de Lote: revisão agrupada de cada nota + confirmação explícita */}
       <Modal
         isOpen={isScheduleModalOpen}
@@ -1489,6 +1644,17 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
 
           <section className="pf-form-stack" aria-label="Revisão das notas do lote">
             <h3 className="pf-subpanel-title">Revisão das notas do lote</h3>
+            {(() => {
+              const sel = drafts.filter((d) => selectedDraftIds.has(d.id));
+              const comBloqueio = sel.filter((d) => (d.issues || []).some((i) => i.severity === 'error')).length;
+              const semValidar = sel.filter((d) => d.validation?.status === 'NOT_VALIDATED').length;
+              return comBloqueio || semValidar ? (
+                <Alert variant={comBloqueio ? 'error' : 'warning'} title="Pendências antes de emitir">
+                  {comBloqueio ? `${comBloqueio} rascunho(s) com bloqueio(s): o servidor recusará a emissão até a correção. ` : ''}
+                  {semValidar ? `${semValidar} rascunho(s) sem validação da versão atual: o servidor valida de novo ao emitir ou agendar.` : ''}
+                </Alert>
+              ) : null;
+            })()}
             <div className="pf-review-batch">
               {drafts.filter((d) => selectedDraftIds.has(d.id)).map((d, idx, list) => (
                 <details key={d.id} open={list.length === 1 || idx === 0}>
@@ -1496,6 +1662,17 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
                     {d.customer?.name || d.customer_name || 'Tomador'} — {formatCurrencyPtBr(d.amount)} — competência {d.competence} (v{d.version})
                   </summary>
                   <div style={{ marginTop: '0.75rem' }}>
+                    <div style={{ marginBottom: '0.75rem' }}>
+                      <PendenciasRascunho
+                        issues={d.issues || []}
+                        companyId={currentCompany?.id}
+                        validatedVersion={d.validation?.validated_version ?? null}
+                        validatedAt={d.validation?.validated_at ?? null}
+                        currentVersion={d.version}
+                        validated={d.validation?.validated_version != null}
+                        compact
+                      />
+                    </div>
                     <RevisaoNfse
                       prestador={{ name: currentCompany?.name, cnpj: currentCompany?.cnpj }}
                       tomador={{ name: d.customer?.name || d.customer_name, document: d.customer?.document }}

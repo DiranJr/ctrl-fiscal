@@ -594,11 +594,33 @@ export interface DraftService {
   additional_info?: AdditionalInfo | null;
 }
 
+/** Destino da correção de uma pendência (devolvido pelo servidor). */
+export type IssueTarget =
+  | { kind: 'draft_field'; field: string }
+  | { kind: 'customer'; customer_id?: string | null }
+  | { kind: 'service_profile'; profile_id?: string | null }
+  | { kind: 'company' }
+  | { kind: 'certificate' };
+
 export interface ValidationIssue {
   field: string;
   code: string;
   message: string;
   severity: 'error' | 'warning' | 'info';
+  /** Código da regra oficial (Anexo I) ou tag da nota de referência, quando houver. */
+  rule?: string | null;
+  /** Detalhamento de apresentação (não muda regra nem severidade). */
+  section?: string | null;
+  label?: string | null;
+  /** true = impede agendar/emitir. */
+  blocking?: boolean | null;
+  /** Texto OFICIAL da regra do Anexo I (sem alteração), quando houver. */
+  reason?: string | null;
+  reason_source?: string | null;
+  official_message?: string | null;
+  xml_path?: string | null;
+  action?: string | null;
+  target?: IssueTarget | null;
 }
 
 export interface CustomerSnapshot {
@@ -812,6 +834,8 @@ export interface CreateDraftFromDocumentRequest {
 export interface ValidateDraftResponse {
   valid: boolean;
   issues: ValidationIssue[];
+  /** Versão do rascunho a que as pendências se referem. */
+  validated_version?: number | null;
 }
 
 export type BatchStatus =

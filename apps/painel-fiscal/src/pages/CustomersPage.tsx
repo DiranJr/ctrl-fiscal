@@ -88,6 +88,17 @@ export const CustomersPage: React.FC = () => {
     setIsModalOpen(true);
   };
 
+  // Link de uma pendência de rascunho (?customer_id=<id>, aberto em nova aba): abre direto a edição desse cliente.
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const id = url.searchParams.get('customer_id');
+    if (!id || customers.length === 0) return;
+    const alvo = customers.find((c) => c.id === id);
+    url.searchParams.delete('customer_id');
+    window.history.replaceState({}, '', url.toString());
+    if (alvo) handleOpenEdit(alvo);
+  }, [customers]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleOpenEdit = (c: Customer) => {
     setEditingCustomer(c);
     setName(c.name);

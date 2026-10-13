@@ -203,3 +203,28 @@
 .pf-secao[data-ok="true"] { border-color: var(--status-authorized-border); }
 .pf-secao[data-ok="false"] { border-color: var(--status-rejected-border); }
 .pf-prest-tabela td, .pf-prest-tabela th { vertical-align: top; overflow-wrap: anywhere; }
+
+/* Pendências da validação do rascunho (lista, editor, revisão de emissão e Nova NFS-e) */
+.pf-pend { display: flex; flex-direction: column; gap: 0.625rem; font-size: 0.8125rem; min-width: 0; }
+.pf-pend-cabecalho { display: flex; justify-content: space-between; align-items: flex-start; gap: 0.75rem; flex-wrap: wrap; }
+.pf-pend-grupo { display: flex; flex-direction: column; gap: 0.375rem; }
+.pf-pend-titulo { margin: 0; font-size: 0.875rem; }
+.pf-pend-lista { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+.pf-pend-item { border-radius: var(--radius-md); padding: 0.625rem 0.75rem; border-left-width: 4px; border-left-style: solid;
+  overflow-wrap: anywhere; word-break: break-word; min-width: 0; }
+.pf-pend-item[data-severity="error"] { border: 1px solid var(--status-rejected-border); border-left: 4px solid var(--color-danger);
+  background: var(--status-rejected-bg); color: var(--status-rejected-text); }
+.pf-pend-item[data-severity="warning"] { border: 1px solid var(--status-processing-border); border-left: 4px solid var(--status-processing-border);
+  background: var(--status-processing-bg); color: var(--status-processing-text); }
+.pf-pend-item[data-severity="info"] { border: 1px solid var(--color-border); background: var(--color-bg-subtle); }
+.pf-pend-tag { display: inline-block; font-size: 0.6875rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
+  padding: 0 0.375rem; border-radius: 999px; border: 1px solid currentColor; }
+.pf-pend-msg { margin: 0.375rem 0 0; font-weight: 600; }
+.pf-pend-motivo, .pf-pend-acao, .pf-pend-fonte { margin: 0.25rem 0 0; }
+.pf-pend-botoes { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin-top: 0.375rem; }
+.pf-pend-link { font-weight: 600; text-decoration: underline; color: inherit; }
+.pf-pend-tecnico { margin-top: 0.375rem; }
+.pf-pend-tecnico summary { cursor: pointer; font-size: 0.75rem; }
+.pf-pend-tecnico code { font-size: 0.75rem; overflow-wrap: anywhere; }
+.pf-campo-destacado { outline: 3px solid var(--color-danger); outline-offset: 2px; transition: outline-color 0.3s; }
+@media (max-width: 640px) { .pf-pend-cabecalho > button { width: 100%; } .pf-pend .pf-dl { grid-template-columns: 1fr; } }

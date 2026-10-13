@@ -376,6 +376,18 @@ class Issue(BaseModel):
     message: str
     severity: Literal["error", "warning", "info"]
     rule: str | None = Field(None, description="Código da regra oficial (Anexo I), quando houver.")
+    # Detalhamento para apresentação (domain/pendencias.py): não altera regra nem severidade.
+    section: str | None = Field(None, description="Seção do rascunho (Tomador, Serviço, Obra, ISSQN, IBS/CBS...).")
+    label: str | None = Field(None, description="Campo em português.")
+    blocking: bool | None = Field(None, description="true = erro que impede agendar/emitir; avisos não bloqueiam.")
+    reason: str | None = Field(None, description="Texto oficial da regra do Anexo I (sem alteração), quando houver.")
+    reason_source: str | None = Field(None, description="Origem: regra oficial do Anexo I, nota de referência ou "
+                                                        "validação local (sem código oficial).")
+    official_message: str | None = Field(None, description="Mensagem oficial da Sefin para a regra, quando houver.")
+    xml_path: str | None = Field(None, description="Elemento da DPS envolvido (DPS/infDPS/...).")
+    action: str | None = Field(None, description="Onde corrigir.")
+    target: dict | None = Field(None, description="Destino da correção: draft_field (field), customer (customer_id), "
+                                                  "service_profile (profile_id), company ou certificate.")
 
 
 class DraftValidation(BaseModel):
@@ -503,6 +515,7 @@ class DraftPage(BaseModel):
 class ValidationOut(BaseModel):
     valid: bool
     issues: list[Issue]
+    validated_version: int | None = Field(None, description="Versão do rascunho a que estas pendências se referem.")
 
 
 # ---------- documentos ----------
