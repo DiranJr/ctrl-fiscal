@@ -15,6 +15,7 @@ import {
   DocumentFilter,
   ReviewDocumentRequest,
   Draft,
+  DraftDeleted,
   CreateDraftRequest,
   UpdateDraftRequest,
   CreateDraftFromDocumentRequest,
@@ -1094,6 +1095,25 @@ export class MockFiscalApiClient implements IFiscalApiClient {
 
     list[idx] = updated;
     return updated;
+  }
+
+  async deleteDraft(companyId: string, draftId: string, expectedVersion: number): Promise<DraftDeleted> {
+    const list = this.drafts.get(companyId) || [];
+    const current = list.find((d) => d.id === draftId);
+    if (!current) {
+      throw new ProblemDetailsException({ type: 'urn:problem:not-found', title: 'Rascunho Não Encontrado', status: 404,
+        detail: `Rascunho ${draftId} não encontrado.` });
+    }
+    if (current.version !== expectedVersion) {
+      throw new ProblemDetailsException({ type: 'urn:problem:version-conflict', title: 'Conflito de Versão', status: 409,
+        detail: 'Rascunho alterado por outra pessoa. Recarregue antes de excluir.' });
+    }
+    if (!['DRAFT', 'WITHDRAWN'].includes(current.status) || current.current_item_id) {
+      throw new ProblemDetailsException({ type: 'urn:problem:conflict', title: 'Rascunho não pode ser excluído', status: 409,
+        detail: `Rascunho em ${current.status} não pode ser excluído.` });
+    }
+    this.drafts.set(companyId, list.filter((d) => d.id !== draftId));
+    return { id: draftId, deleted: true, deleted_at: new Date().toISOString(), version: current.version + 1, already_deleted: false };
   }
 
   async withdrawDraft(companyId: string, draftId: string, expectedVersion: number): Promise<Draft> {

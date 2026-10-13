@@ -328,6 +328,14 @@ class DraftWithdraw(Strict):
     expected_version: int = Field(ge=1, description="Versão do rascunho que o usuário está vendo.")
 
 
+class DraftDeleted(BaseModel):
+    id: str
+    deleted: bool = True
+    deleted_at: datetime
+    version: int = Field(description="Versão do rascunho após a exclusão (preservada).")
+    already_deleted: bool = Field(description="true quando a exclusão já tinha sido feita (repetição idempotente).")
+
+
 class DraftFromDocument(Strict):
     source_document_id: str = UUIDStr
 

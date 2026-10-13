@@ -192,6 +192,10 @@ class Draft(Base):
     created_by: Mapped[str] = mapped_column(String(36))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime())
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    # Exclusão LÓGICA: a linha (identidade, versões, origem) e a auditoria ficam; o rascunho sai da lista e não pode
+    # mais ser editado, validado nem emitido. Só rascunho sem transmissão e sem vínculo com processamento fiscal.
+    deleted_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    deleted_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
 
 
 class Batch(Base):

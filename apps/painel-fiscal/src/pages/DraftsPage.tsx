@@ -65,6 +65,13 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
 
   // Retirada da fila (para rascunhos SCHEDULED)
   const [withdrawingDraftId, setWithdrawingDraftId] = useState<string | null>(null);
+  // Excluir rascunho (exclusão lógica no servidor): confirmação com tomador, serviço e valor.
+  const [deletingDraft, setDeletingDraft] = useState<Draft | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const canPrepare = !!currentCompany?.permissions?.includes('prepare');
+  // Só o que nunca entrou na fila (ou foi retirado antes do envio); o servidor confere de novo, com trava.
+  const isDeletable = (d: Draft) => (d.status === 'DRAFT' || d.status === 'WITHDRAWN') && !d.current_item_id;
 
   // Validação
   const [validatingDraftId, setValidatingDraftId] = useState<string | null>(null);
@@ -375,6 +382,52 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
       if (isSameCompany(companyId)) showToast(err.message || 'Falha ao retirar rascunho da fila.', 'error');
     } finally {
       setWithdrawingDraftId(null);
+    }
+  };
+
+  const handleAskDelete = (draft: Draft) => {
+    setDeleteError(null);
+    setDeletingDraft(draft);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!currentCompany || !deletingDraft) return;
+    const companyId = currentCompany.id;
+    const alvo = deletingDraft;
+    setIsDeleting(true);
+    setDeleteError(null);
+    try {
+      await clients.fiscal.deleteDraft(companyId, alvo.id, alvo.version);
+      if (!isSameCompany(companyId)) return;
+      setDeletingDraft(null);
+      if (editingDraft?.id === alvo.id) {
+        // Excluído pelo editor: volta para a lista sem perguntar sobre alterações não salvas.
+        setEditDirty(false);
+        setEditingDraft(null);
+      }
+      setSelectedDraftIds((prev) => {
+        const next = new Set(prev);
+        next.delete(alvo.id);
+        return next;
+      });
+      showToast('Rascunho excluído.', 'success');
+      await refreshCounters();
+      await loadDrafts();
+    } catch (err: any) {
+      if (!isSameCompany(companyId)) return;
+      logSafe('excluir rascunho', err);
+      const status = err instanceof ProblemDetailsException ? err.problem.status : undefined;
+      const code = err instanceof ProblemDetailsException ? (err.problem as any).code : undefined;
+      const motivo = err?.message || 'Falha ao excluir o rascunho.';
+      setDeleteError(
+        code === 'VERSION_CONFLICT'
+          ? `${motivo} O rascunho foi alterado depois que você o abriu: feche, confira a versão atual e tente de novo.`
+          : status === 403
+            ? 'Você não tem permissão para excluir rascunhos neste workspace.'
+            : motivo,
+      );
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -919,6 +972,20 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
             >
               ✏️ Editar
             </Button>
+            {canPrepare && isDeletable(d) && (
+              <Button
+                size="sm"
+                variant="ghost"
+                title="Excluir este rascunho (pede confirmação)"
+                aria-label={`Excluir rascunho de ${d.customer?.name || 'tomador'}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleAskDelete(d);
+                }}
+              >
+                🗑️ Excluir
+              </Button>
+            )}
           </div>
         );
       },
@@ -983,6 +1050,11 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
                 Versão esperada: <strong>v{editingDraft.version}</strong>
               </div>
               <div className="pf-actions-end">
+                {canPrepare && isDeletable(editingDraft) && (
+                  <Button variant="danger" onClick={() => handleAskDelete(editingDraft)} disabled={isSavingEdit}>
+                    🗑️ Excluir rascunho
+                  </Button>
+                )}
                 <Button variant="outline" onClick={closeEditor} disabled={isSavingEdit}>
                   Cancelar
                 </Button>
@@ -1312,6 +1384,50 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
                 blockedReason={editDirty ? 'Há alterações não salvas: salve o rascunho antes de registrar ou aprovar a configuração desta operação.' : null} />
             )}
           </div>
+        </Modal>
+      )}
+
+      {/* Confirmação de exclusão: identifica tomador, serviço e valor; erro mantém o rascunho. */}
+      {deletingDraft && (
+        <Modal
+          isOpen={true}
+          onClose={() => !isDeleting && setDeletingDraft(null)}
+          title="Excluir rascunho?"
+          description="O rascunho sai da lista e não poderá mais ser editado nem emitido. O histórico e a auditoria são preservados; notas emitidas não são afetadas."
+          maxWidth="560px"
+          footer={
+            <div className="pf-actions-end">
+              <Button variant="outline" onClick={() => setDeletingDraft(null)} disabled={isDeleting}>
+                Cancelar
+              </Button>
+              <Button variant="danger" isLoading={isDeleting} onClick={handleConfirmDelete}>
+                Excluir rascunho
+              </Button>
+            </div>
+          }
+        >
+          <dl className="pf-dl" aria-label="Rascunho a excluir">
+            <dt>Tomador</dt>
+            <dd>
+              {deletingDraft.customer?.name || '—'}
+              {deletingDraft.customer?.document ? ` · ${deletingDraft.customer.document}` : ''}
+            </dd>
+            <dt>Serviço</dt>
+            <dd>
+              {deletingDraft.service?.national_code ? `${deletingDraft.service.national_code} — ` : ''}
+              {(deletingDraft.service?.description || '—').slice(0, 160)}
+              {(deletingDraft.service?.description || '').length > 160 ? '…' : ''}
+            </dd>
+            <dt>Valor do serviço</dt>
+            <dd><strong>{formatCurrencyPtBr(deletingDraft.amount)}</strong></dd>
+            <dt>Competência</dt>
+            <dd>{deletingDraft.competence} · versão v{deletingDraft.version}</dd>
+          </dl>
+          {deleteError && (
+            <Alert variant="error" title="O rascunho não foi excluído">
+              {deleteError}
+            </Alert>
+          )}
         </Modal>
       )}
 

@@ -87,7 +87,8 @@ def dashboard(request: Request, environment: str | None = EnvQuery, cc: CompanyC
         "cancelled": s.scalar(select(func.count()).select_from(Document).where(*base, Document.status == "CANCELLED")),
     }
     drafts = {st: n for st, n in s.execute(
-        select(Draft.status, func.count()).where(Draft.company_id == cc.company.id, Draft.environment == env).group_by(Draft.status)
+        select(Draft.status, func.count()).where(Draft.company_id == cc.company.id, Draft.environment == env,
+                                                 Draft.deleted_at.is_(None)).group_by(Draft.status)
     ).all()}
     queue = {st: n for st, n in s.execute(
         select(BatchItem.status, func.count()).where(BatchItem.company_id == cc.company.id, BatchItem.environment == env)
@@ -366,7 +367,8 @@ def list_drafts(
     status: sc.QueueStatus | None = Query(None), customer_id: str | None = Query(None, max_length=36),
     pp: PageParams = Depends(), cc: CompanyCtx = Depends(company_ctx("view")), s: Session = Depends(db_session),
 ) -> dict:
-    q = select(Draft).where(Draft.company_id == cc.company.id, Draft.environment == cc.company.environment)
+    q = select(Draft).where(Draft.company_id == cc.company.id, Draft.environment == cc.company.environment,
+                            Draft.deleted_at.is_(None))
     if status:
         q = q.where(Draft.status == status)
     if customer_id:
@@ -461,6 +463,19 @@ def withdraw_draft(draft_id: str, body: sc.DraftWithdraw, request: Request,
                             trace_id=trace_id_for(request))
     s.commit()
     return drafts_d.draft_out(d)
+
+
+@router.delete("/drafts/{draft_id}", response_model=sc.DraftDeleted, responses=E, tags=["drafts"],
+               summary="Exclui (logicamente) um rascunho sem transmissão nem vínculo com processamento fiscal. "
+                       "Agendado exige cancelar o agendamento antes. Repetir devolve o mesmo resultado.")
+def delete_draft(draft_id: str, request: Request,
+                 expected_version: int = Query(ge=1, description="Versão do rascunho que o usuário confirmou."),
+                 cc: CompanyCtx = Depends(company_ctx("prepare")), s: Session = Depends(db_session)) -> dict:
+    c = ctx(request)
+    d, agora = drafts_d.delete_draft(s, cc.company, draft_id, expected_version=expected_version, user_id=cc.user_id,
+                                     now=c.clock.now(), trace_id=trace_id_for(request))
+    s.commit()
+    return {"id": d.id, "deleted": True, "deleted_at": d.deleted_at, "version": d.version, "already_deleted": not agora}
 
 
 # ---------------------------------------------------------------- lotes

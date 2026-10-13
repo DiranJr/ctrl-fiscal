@@ -379,7 +379,49 @@ def get_draft(s: Session, company: CompanyInfo, draft_id: str, lock: bool = Fals
     d = s.scalar(q)
     if d is None:
         raise DomainError(404, "DRAFT_NOT_FOUND", "Rascunho não encontrado.")
+    if d.deleted_at is not None:
+        raise DomainError(410, "DRAFT_DELETED", "Rascunho excluído: não pode mais ser aberto, editado nem emitido.")
     return d
+
+
+# Situações em que o rascunho nunca entrou na fila ou foi retirado dela antes de qualquer envio.
+DELETABLE_STATUSES = ("DRAFT", "WITHDRAWN")
+
+
+def delete_draft(s: Session, company: CompanyInfo, draft_id: str, *, expected_version: int, user_id: str,
+                 now: datetime, trace_id: str | None) -> tuple[Draft, bool]:
+    """Exclusão LÓGICA, na mesma transação e com a linha travada (FOR UPDATE) — a mesma trava usada por editar, emitir
+    agora e agendar, que passam a recusar o rascunho excluído. Permitida só sem transmissão e sem vínculo com
+    processamento fiscal: nenhum item de fila ativo, enviado, incerto, emitido ou rejeitado (um item retirado da fila
+    antes do envio não conta). Repetir a exclusão devolve o mesmo resultado (idempotente). Notas, XMLs, eventos, jobs e
+    documentos de referência não são tocados. Devolve (rascunho, excluído_agora)."""
+    d = s.scalar(select(Draft).where(Draft.id == draft_id, Draft.company_id == company.id).with_for_update())
+    if d is None:  # inclusive de outro workspace: nada é revelado
+        raise DomainError(404, "DRAFT_NOT_FOUND", "Rascunho não encontrado.")
+    if d.deleted_at is not None:
+        return d, False
+    if d.version != expected_version:
+        raise DomainError(409, "VERSION_CONFLICT", "Rascunho alterado por outra pessoa. Recarregue antes de excluir.")
+    if d.status not in DELETABLE_STATUSES or d.current_item_id:
+        dica = (" Retire-o da fila (cancelar o agendamento) antes de excluir." if d.status == "SCHEDULED" else "")
+        raise DomainError(409, "DRAFT_NOT_DELETABLE",
+                          f"Rascunho em {d.status} não pode ser excluído: já entrou no processamento fiscal "
+                          f"(agendado, em fila, em transmissão, com resultado a confirmar ou emitido).{dica}")
+    vinculos = s.scalars(select(BatchItem).where(BatchItem.draft_id == d.id, BatchItem.company_id == company.id,
+                                                 BatchItem.status != "WITHDRAWN")).all()
+    if vinculos:
+        raise DomainError(409, "DRAFT_NOT_DELETABLE",
+                          "Rascunho vinculado a processamento fiscal (transmissão ou submissão registrada): não pode "
+                          "ser excluído. O histórico de emissão é preservado.",
+                          [{"field": "draft_id", "code": "DRAFT_HAS_SUBMISSION",
+                            "message": f"{len(vinculos)} item(ns) de emissão em {sorted({i.status for i in vinculos})}."}])
+    d.deleted_at, d.deleted_by = now, user_id
+    d.version += 1
+    d.updated_at = now
+    audit(s, now, "draft.deleted", company_id=d.company_id, actor_id=user_id, target_type="draft", target_id=d.id,
+          details={"version": d.version, "status": d.status, "customer_id": d.customer_id, "amount": str(d.amount),
+                   "source_document_id": d.source_document_id, "logical": True}, trace_id=trace_id)
+    return d, True
 
 
 def patch_draft(

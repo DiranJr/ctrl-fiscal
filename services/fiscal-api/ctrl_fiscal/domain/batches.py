@@ -67,6 +67,11 @@ def create_batch(
         if d is None:
             errors.append({"field": f"drafts[{did}]", "code": "DRAFT_NOT_FOUND", "message": "Rascunho não encontrado."})
             continue
+        if d.deleted_at is not None:  # excluído (mesma trava de linha da exclusão): nunca entra na fila
+            conflict = True
+            errors.append({"field": f"drafts[{did}]", "code": "DRAFT_DELETED",
+                           "message": "Rascunho excluído: não pode ser agendado nem emitido."})
+            continue
         if d.environment != company.environment:
             errors.append({"field": f"drafts[{did}]", "code": "DRAFT_OTHER_ENVIRONMENT", "message": "Rascunho de outro ambiente."})
         elif d.status != "DRAFT":

@@ -722,6 +722,8 @@ export interface DraftValidation {
   validated_at?: string | null;
 }
 
+/** Resultado de "Excluir rascunho" (exclusão lógica; repetir devolve o mesmo resultado). */
+export interface DraftDeleted { id: string; deleted: boolean; deleted_at: string; version: number; already_deleted: boolean }
 export interface Draft {
   id: string;
   customer_id: string;

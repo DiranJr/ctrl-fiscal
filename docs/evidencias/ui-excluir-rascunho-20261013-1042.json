@@ -1,0 +1,67 @@
+{
+ "ambiente": "http://127.0.0.1:8098",
+ "governo": "simulado",
+ "dados": "fictícios",
+ "resultados": [
+  {
+   "teste": "preparação: 4 rascunhos fictícios; um deles agendado",
+   "resultado": "PASS",
+   "obtido": "{\"batch_id\":\"da8028c9-06fc-4bcb-83b7-e0f4197fd98e\",\"status\":\"SCHEDULED\",\"mode\":\"SCHEDULED\",\"scheduled_at\":\"2026-11-02T13:41:58.859932+00:00\",\"total\":1}"
+  },
+  {
+   "teste": "confirmação identifica tomador, serviço e valor",
+   "resultado": "PASS",
+   "obtido": "Excluir rascunho? |  | O rascunho sai da lista e não poderá mais ser editado nem emitido. O histórico e a auditoria são preservados; notas emitidas não são afetadas. |  | × | Tomador | Tomador Fictíci"
+  },
+  {
+   "teste": "cancelar mantém o rascunho na lista",
+   "resultado": "PASS",
+   "obtido": ""
+  },
+  {
+   "teste": "lista: após confirmar, o rascunho sai da lista e fica indisponível (410)",
+   "resultado": "PASS",
+   "obtido": ""
+  },
+  {
+   "teste": "editor: confirmação aparece sobre o editor com os dados do rascunho",
+   "resultado": "PASS",
+   "obtido": ""
+  },
+  {
+   "teste": "editor: após excluir, o editor fecha e a lista não mostra o rascunho",
+   "resultado": "PASS",
+   "obtido": ""
+  },
+  {
+   "teste": "falha da API: erro claro no diálogo e rascunho mantido",
+   "resultado": "PASS",
+   "obtido": ""
+  },
+  {
+   "teste": "falha da API: rascunho continua na lista",
+   "resultado": "PASS",
+   "obtido": ""
+  },
+  {
+   "teste": "agendado: sem botão de exclusão; a API recusa (409) e pede cancelar o agendamento",
+   "resultado": "PASS",
+   "obtido": "409"
+  },
+  {
+   "teste": "nenhum diálogo nativo do navegador foi aberto",
+   "resultado": "PASS",
+   "obtido": ""
+  },
+  {
+   "teste": "leitor: sem botão de exclusão e a API recusa (403)",
+   "resultado": "PASS",
+   "obtido": "403"
+  },
+  {
+   "teste": "sem violação de CSP",
+   "resultado": "PASS",
+   "obtido": ""
+  }
+ ]
+}

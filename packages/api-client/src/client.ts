@@ -16,6 +16,7 @@ import {
   DocumentFilter,
   ReviewDocumentRequest,
   Draft,
+  DraftDeleted,
   CreateDraftRequest,
   UpdateDraftRequest,
   CreateDraftFromDocumentRequest,
@@ -132,6 +133,8 @@ export interface IFiscalApiClient {
   createDraft(companyId: string, req: CreateDraftRequest): Promise<Draft>;
   updateDraft(companyId: string, draftId: string, req: UpdateDraftRequest): Promise<Draft>;
   withdrawDraft(companyId: string, draftId: string, expectedVersion: number): Promise<Draft>;
+  /** Exclusão lógica; só rascunho sem transmissão nem vínculo com processamento fiscal (409 caso contrário). */
+  deleteDraft(companyId: string, draftId: string, expectedVersion: number): Promise<DraftDeleted>;
   validateDraft(companyId: string, draftId: string): Promise<ValidateDraftResponse>;
   /** Registra (ou reutiliza a aprovada) a configuração tributária da operação do rascunho. Não aprova nem emite. */
   registerOperationConfig(companyId: string, draftId: string, expectedVersion: number): Promise<Draft>;
@@ -1176,6 +1179,12 @@ export class HttpFiscalApiClient implements IFiscalApiClient {
     return this.request<Draft>(companyId, `/drafts/${draftId}`, {
       method: 'PATCH',
       body: JSON.stringify(payload),
+    });
+  }
+
+  async deleteDraft(companyId: string, draftId: string, expectedVersion: number): Promise<DraftDeleted> {
+    return this.request<DraftDeleted>(companyId, `/drafts/${draftId}?expected_version=${encodeURIComponent(String(expectedVersion))}`, {
+      method: 'DELETE',
     });
   }
 
