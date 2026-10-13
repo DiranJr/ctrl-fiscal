@@ -256,7 +256,8 @@ def derive_status(counts: dict[str, int], total: int) -> str:
     return "SCHEDULED"
 
 
-def batch_out(b: Batch, counts: dict[str, int], items: list[BatchItem] | None = None) -> dict:
+def batch_out(b: Batch, counts: dict[str, int], items: list[BatchItem] | None = None,
+              drafts: dict[str, Draft] | None = None) -> dict:
     done = sum(counts.get(k, 0) for k in TERMINAL)
     out = {
         "id": b.id,
@@ -274,12 +275,14 @@ def batch_out(b: Batch, counts: dict[str, int], items: list[BatchItem] | None = 
         "created_by": b.created_by,
     }
     if items is not None:
-        out["items"] = [item_out(i) for i in items]
+        out["items"] = [item_out(i, (drafts or {}).get(i.draft_id)) for i in items]
     return out
 
 
-def item_out(i: BatchItem) -> dict:
-    return {
+def item_out(i: BatchItem, draft: Draft | None = None) -> dict:
+    from .itens_lote import diagnostico  # noqa: PLC0415
+
+    return {**diagnostico(i, draft),
         "id": i.id,
         "draft_id": i.draft_id,
         "draft_version": i.draft_version,

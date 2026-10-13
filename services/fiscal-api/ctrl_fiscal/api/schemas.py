@@ -742,6 +742,23 @@ class BatchItemOut(BaseModel):
     result: dict[str, Any] | None
     document_id: str | None
     simulated: bool
+    # Diagnóstico de apresentação (domain/itens_lote.py), somente leitura.
+    stage: str | None = Field(None, description="QUEUED | BLOCKED_BEFORE_SEND | SENDING | UNCERTAIN | LOCAL_VALIDATION | "
+                                                "OFFICIAL_REJECTION | AUTHORIZED | WITHDRAWN")
+    stage_label: str | None = None
+    guidance: str | None = Field(None, description="Como corrigir ou reconciliar.")
+    transmitted: bool | None = Field(None, description="false/true quando o fluxo garante; null = depende da "
+                                                       "reconciliação oficial (consulta da DPS).")
+    errors: list[dict[str, Any]] = Field(default_factory=list, description="Todos os códigos/mensagens registrados, "
+                                                                          "com a origem (LOCAL, OFFICIAL, PROCESSING).")
+    customer_document: str | None = None
+    scheduled_at: datetime | None = None
+    updated_at: datetime | None = None
+    submission_id: str | None = None
+    dps_series: str | None = None
+    dps_number: int | None = None
+    draft: dict[str, Any] | None = Field(None, description="Rascunho de origem hoje (versão, situação, excluído, ainda "
+                                                           "vinculado a este item).")
 
 
 class Progress(BaseModel):

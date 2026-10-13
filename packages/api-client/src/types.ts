@@ -879,6 +879,22 @@ export interface BatchItem {
   result?: BatchItemResult | null;
   document_id?: string | null;
   simulated: boolean;
+  total_withheld?: string | null;
+  net_amount?: string | null;
+  /** Diagnóstico (somente leitura): etapa, erros com origem, referências, rascunho de origem e orientação. */
+  stage?: 'QUEUED' | 'BLOCKED_BEFORE_SEND' | 'SENDING' | 'UNCERTAIN' | 'LOCAL_VALIDATION' | 'OFFICIAL_REJECTION' | 'AUTHORIZED' | 'WITHDRAWN' | string | null;
+  stage_label?: string | null;
+  guidance?: string | null;
+  /** false/true quando o fluxo garante; null = só a reconciliação oficial (consulta da DPS) pode dizer. */
+  transmitted?: boolean | null;
+  errors?: { code: string; message?: string | null; source: 'LOCAL' | 'OFFICIAL' | 'PROCESSING' | string }[];
+  customer_document?: string | null;
+  scheduled_at?: string | null;
+  updated_at?: string | null;
+  submission_id?: string | null;
+  dps_series?: string | null;
+  dps_number?: number | null;
+  draft?: { id: string; current_version: number; status: string; deleted: boolean; linked: boolean } | null;
 }
 
 export interface Batch {

@@ -525,8 +525,12 @@ def list_batches(pp: PageParams = Depends(), cc: CompanyCtx = Depends(company_ct
 @router.get("/batches/{batch_id}", response_model=sc.BatchDetail, responses=E, tags=["batches"])
 def get_batch(batch_id: str, cc: CompanyCtx = Depends(company_ctx("view")), s: Session = Depends(db_session)) -> dict:
     b = batches_d.get_batch(s, cc.company, batch_id)
-    items = s.scalars(select(BatchItem).where(BatchItem.batch_id == b.id).order_by(BatchItem.created_at, BatchItem.id)).all()
-    return batches_d.batch_out(b, batches_d.batch_counts(s, [b.id])[b.id], items)
+    # Todos os itens do lote, em qualquer situação (rejeitados, retirados, pendentes, incertos e autorizados).
+    items = s.scalars(select(BatchItem).where(BatchItem.batch_id == b.id, BatchItem.company_id == cc.company.id)
+                      .order_by(BatchItem.created_at, BatchItem.id)).all()
+    ids = {i.draft_id for i in items}
+    drafts = {d.id: d for d in s.scalars(select(Draft).where(Draft.id.in_(ids), Draft.company_id == cc.company.id))}         if ids else {}
+    return batches_d.batch_out(b, batches_d.batch_counts(s, [b.id])[b.id], items, drafts)
 
 
 @router.post("/batches/{batch_id}/cancel-pending", response_model=sc.CancelPendingOut, responses=E, tags=["batches"])
