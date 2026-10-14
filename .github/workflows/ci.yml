@@ -114,6 +114,8 @@ jobs:
           npm run typecheck --workspace=@ctrl-fiscal/web
       - name: Testes do api-client
         run: node --test --import tsx packages/api-client/test/*.test.ts
+      - name: Testes do painel fiscal
+        run: node --test --import tsx apps/painel-fiscal/test/*.test.ts
 
   docker:
     name: Build das imagens (sem push)
