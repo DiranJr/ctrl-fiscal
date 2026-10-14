@@ -9,6 +9,7 @@ import { ConfirmacaoProducao, montarConfirmacaoProducao, ModoEmissao } from '../
 import { OperacaoTributaria } from '../components/OperacaoTributaria.js';
 import { useFiscal, logSafe } from '../context/FiscalContext.js';
 import { PendenciasRascunho } from '../components/PendenciasRascunho.js';
+import { normalizarPercentual, trocaDeUnidade } from '../components/tributosAproximados.js';
 import { useUnsavedChanges } from '@ctrl-fiscal/ui';
 import {
   Table,
@@ -215,6 +216,7 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
   const [editApproxState, setEditApproxState] = useState('');
   const [editApproxMunicipal, setEditApproxMunicipal] = useState('');
   const [editApproxSimples, setEditApproxSimples] = useState('');
+  const [editApproxAviso, setEditApproxAviso] = useState<string | null>(null);
 
   const [editEnableIbsCbs, setEditEnableIbsCbs] = useState(false);
   // Sem valores padrão: cIndOp/cClassTrib são definidos pela contabilidade (nada é presumido).
@@ -395,9 +397,13 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
     // Tributos Aproximados
     if (ts?.approx_tax && ts.approx_tax.mode !== 'NOT_INFORMED') {
       setEditApproxMode(ts.approx_tax.mode);
-      setEditApproxFederal(ts.approx_tax.federal ? (ts.approx_tax.mode === 'VALUES' ? formatCurrencyPtBr(ts.approx_tax.federal, false) : ts.approx_tax.federal) : '');
-      setEditApproxState(ts.approx_tax.state ? formatCurrencyPtBr(ts.approx_tax.state, false) : '');
-      setEditApproxMunicipal(ts.approx_tax.municipal ? formatCurrencyPtBr(ts.approx_tax.municipal, false) : '');
+      // Moeda no formato brasileiro; percentuais exatamente como gravados. Zero gravado aparece como zero; ausente fica vazio.
+      const ap = ts.approx_tax;
+      const fmt = (v?: string | null) => (v == null || v === '' ? '' : ap.mode === 'VALUES' ? formatCurrencyPtBr(v, false) : String(v));
+      setEditApproxFederal(fmt(ap.federal));
+      setEditApproxState(fmt(ap.state));
+      setEditApproxMunicipal(fmt(ap.municipal));
+      setEditApproxAviso(null);
       setEditApproxSimples(ts.approx_tax.simples || '');
     } else {
       setEditApproxMode('NOT_INFORMED');
@@ -719,7 +725,10 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
           if (editApproxState.trim()) approx.state = parseCurrencyPtBrToDecimal(editApproxState);
           if (editApproxMunicipal.trim()) approx.municipal = parseCurrencyPtBrToDecimal(editApproxMunicipal);
         } else if (editApproxMode === 'PERCENT') {
-          if (editApproxFederal.trim()) approx.federal = editApproxFederal.trim();
+          // pTotTribFed/Est/Mun: vírgula ou ponto; número válido vai com 2 casas (TSDec3V2). Vazio NÃO vira zero.
+          if (editApproxFederal.trim()) approx.federal = normalizarPercentual(editApproxFederal);
+          if (editApproxState.trim()) approx.state = normalizarPercentual(editApproxState);
+          if (editApproxMunicipal.trim()) approx.municipal = normalizarPercentual(editApproxMunicipal);
         } else if (editApproxMode === 'SIMPLES_PERCENT') {
           if (editApproxSimples.trim()) approx.simples = editApproxSimples.trim();
         }
@@ -1511,15 +1520,29 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
                     <Select
                       label="Modo de Informação"
                       value={editApproxMode}
-                      onChange={(e) => setEditApproxMode(e.target.value as any)}
+                      onChange={(e) => {
+                        const novo = e.target.value as typeof editApproxMode;
+                        const aviso = trocaDeUnidade(editApproxMode, novo, [editApproxFederal, editApproxState, editApproxMunicipal]);
+                        if (aviso) {
+                          // Nunca reaproveita os mesmos números com outra unidade (R$ ↔ %).
+                          setEditApproxFederal(''); setEditApproxState(''); setEditApproxMunicipal('');
+                        }
+                        setEditApproxAviso(aviso);
+                        setEditApproxMode(novo);
+                      }}
                       helperText="Como os tributos aproximados constam na DPS."
                       options={[
                         { value: 'NOT_INFORMED', label: 'Não Informado (remover grupo)' },
-                        { value: 'VALUES', label: 'Valores em Moeda (R$)' },
-                        { value: 'PERCENT', label: 'Percentual Geral (%)' },
+                        { value: 'VALUES', label: 'Valores em moeda (R$)' },
+                        { value: 'PERCENT', label: 'Percentuais (%)' },
                         { value: 'SIMPLES_PERCENT', label: 'Percentual Simples Nacional (%)' },
                       ]}
                     />
+                    {editApproxAviso && (
+                      <div role="status" style={{ gridColumn: '1 / -1' }}>
+                        <Alert variant="warning" title="Preencha os tributos aproximados de novo">{editApproxAviso}</Alert>
+                      </div>
+                    )}
 
                     {editApproxMode === 'VALUES' && (
                       <>
@@ -1533,8 +1556,15 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
                     )}
 
                     {editApproxMode === 'PERCENT' && (
-                      <Input label="Percentual Federal / Total (%)" value={editApproxFederal} inputMode="decimal" className="pf-money"
-                        onChange={(e) => setEditApproxFederal(e.target.value)} placeholder="0.00" helperText="Percentual total estimado." />
+                      <>
+                        {/* pTotTrib exige os três percentuais (pTotTribFed, pTotTribEst, pTotTribMun). */}
+                        <Input label="Federal (%)" value={editApproxFederal} inputMode="decimal" className="pf-money"
+                          onChange={(e) => setEditApproxFederal(e.target.value)} placeholder="0,00" helperText="Percentual estimado (pTotTribFed)." />
+                        <Input label="Estadual (%)" value={editApproxState} inputMode="decimal" className="pf-money"
+                          onChange={(e) => setEditApproxState(e.target.value)} placeholder="0,00" helperText="Percentual estimado (pTotTribEst)." />
+                        <Input label="Municipal (%)" value={editApproxMunicipal} inputMode="decimal" className="pf-money"
+                          onChange={(e) => setEditApproxMunicipal(e.target.value)} placeholder="0,00" helperText="Percentual estimado (pTotTribMun)." />
+                      </>
                     )}
 
                     {editApproxMode === 'SIMPLES_PERCENT' && (

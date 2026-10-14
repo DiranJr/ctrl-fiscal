@@ -1,0 +1,72 @@
+{
+ "ambiente": "http://127.0.0.1:8098",
+ "governo": "simulado",
+ "dados": "fictícios",
+ "resultados": [
+  {
+   "teste": "rótulos: 'Valores em moeda (R$)' e 'Percentuais (%)'; sem 'Percentual Federal / Total'",
+   "resultado": "PASS",
+   "obtido": "['Não Informado (remover grupo)', 'Valores em moeda (R$)', 'Percentuais (%)', 'Percentual Simples Nacional (%)']"
+  },
+  {
+   "teste": "percentuais: três campos Federal (%), Estadual (%) e Municipal (%)",
+   "resultado": "PASS",
+   "obtido": ""
+  },
+  {
+   "teste": "salvo: percentuais normalizados, zero preservado e vazio NÃO vira zero",
+   "resultado": "PASS",
+   "obtido": "{\"mode\": \"PERCENT\", \"state\": \"0.00\", \"federal\": \"5.25\"}"
+  },
+  {
+   "teste": "reaberto: valores carregados nos campos certos (zero visível, vazio vazio)",
+   "resultado": "PASS",
+   "obtido": ""
+  },
+  {
+   "teste": "três percentuais salvos (pTotTribFed/Est/Mun)",
+   "resultado": "PASS",
+   "obtido": "{\"mode\": \"PERCENT\", \"state\": \"0.00\", \"federal\": \"5.25\", \"municipal\": \"2.00\"}"
+  },
+  {
+   "teste": "reaberto: os três percentuais, com o zero explícito",
+   "resultado": "PASS",
+   "obtido": ""
+  },
+  {
+   "teste": "troca % → R$: aviso e campos em R$ vazios (não reaproveita os números)",
+   "resultado": "PASS",
+   "obtido": ""
+  },
+  {
+   "teste": "cancelar a troca não altera o rascunho salvo",
+   "resultado": "PASS",
+   "obtido": ""
+  },
+  {
+   "teste": "moeda: três valores em R$ salvos (zero preservado)",
+   "resultado": "PASS",
+   "obtido": "{\"mode\": \"VALUES\", \"state\": \"0.00\", \"federal\": \"10.50\", \"municipal\": \"3.00\"}"
+  },
+  {
+   "teste": "moeda reaberta no formato brasileiro",
+   "resultado": "PASS",
+   "obtido": ""
+  },
+  {
+   "teste": "Nova NFS-e: mesmos rótulos e aviso ao trocar R$ → %",
+   "resultado": "PASS",
+   "obtido": "['Não informado na DPS', 'Valores em moeda (R$)', 'Percentuais (%)', 'Percentual do Simples Nacional (%)']"
+  },
+  {
+   "teste": "celular: seção de tributos aproximados sem rolagem horizontal",
+   "resultado": "PASS",
+   "obtido": "excesso=0px"
+  },
+  {
+   "teste": "sem violação de CSP",
+   "resultado": "PASS",
+   "obtido": ""
+  }
+ ]
+}

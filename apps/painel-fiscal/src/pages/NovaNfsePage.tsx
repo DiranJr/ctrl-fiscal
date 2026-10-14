@@ -6,6 +6,7 @@ import { InfoComplFields, InfoComplState, EMPTY_INFO_COMPL, infoComplFromService
 import { ServiceProfilePicker } from '../components/ServiceProfilePicker.js';
 import { RevisaoNfse, ConfirmacaoRevisao } from '../components/RevisaoNfse.js';
 import { PendenciasRascunho } from '../components/PendenciasRascunho.js';
+import { normalizarPercentual, trocaDeUnidade } from '../components/tributosAproximados.js';
 import { ConfirmacaoProducao, montarConfirmacaoProducao, ModoEmissao } from '../components/ConfirmacaoProducao.js';
 import { OperacaoTributaria } from '../components/OperacaoTributaria.js';
 import { ScreenSection } from '../components/screen/ScreenSection.js';
@@ -158,6 +159,7 @@ export const NovaNfsePage: React.FC<{ onNavigate: (route: string) => void }> = (
   const [approxState, setApproxState] = useState('');
   const [approxMunicipal, setApproxMunicipal] = useState('');
   const [approxSimples, setApproxSimples] = useState('');
+  const [approxAviso, setApproxAviso] = useState<string | null>(null);
 
   // Reforma Tributária: IBS / CBS (DPS v1.01). Sem valores padrão: cIndOp/cClassTrib vêm da contabilidade.
   const [enableIbsCbs, setEnableIbsCbs] = useState(false);
@@ -395,7 +397,7 @@ export const NovaNfsePage: React.FC<{ onNavigate: (route: string) => void }> = (
         if (approxState.trim()) approx.state = parseCurrencyPtBrToDecimal(approxState);
         if (approxMunicipal.trim()) approx.municipal = parseCurrencyPtBrToDecimal(approxMunicipal);
       } else if (approxMode === 'PERCENT') {
-        const pct = (v: string) => v.trim().replace(',', '.');
+        const pct = normalizarPercentual;
         if (approxFederal.trim()) approx.federal = pct(approxFederal);
         if (approxState.trim()) approx.state = pct(approxState);
         if (approxMunicipal.trim()) approx.municipal = pct(approxMunicipal);
@@ -1125,14 +1127,25 @@ export const NovaNfsePage: React.FC<{ onNavigate: (route: string) => void }> = (
                 label="Modalidade de Apuração"
                 options={[
                   { value: 'NOT_INFORMED', label: 'Não informado na DPS' },
-                  { value: 'VALUES', label: 'Valores Estimados em Reais (R$)' },
-                  { value: 'PERCENT', label: 'Percentual Geral (%)' },
+                  { value: 'VALUES', label: 'Valores em moeda (R$)' },
+                  { value: 'PERCENT', label: 'Percentuais (%)' },
                   { value: 'SIMPLES_PERCENT', label: 'Percentual do Simples Nacional (%)' },
                 ]}
                 value={approxMode}
-                onChange={(e) => setApproxMode(e.target.value as any)}
+                onChange={(e) => {
+                  const novo = e.target.value as typeof approxMode;
+                  const aviso = trocaDeUnidade(approxMode, novo, [approxFederal, approxState, approxMunicipal]);
+                  if (aviso) { setApproxFederal(''); setApproxState(''); setApproxMunicipal(''); }
+                  setApproxAviso(aviso);
+                  setApproxMode(novo);
+                }}
                 helperText="Escolha como os tributos aproximados constam na DPS."
               />
+              {approxAviso && (
+                <div role="status" style={{ gridColumn: '1 / -1' }}>
+                  <Alert variant="warning" title="Preencha os tributos aproximados de novo">{approxAviso}</Alert>
+                </div>
+              )}
 
               {approxMode === 'VALUES' && (
                 <>
