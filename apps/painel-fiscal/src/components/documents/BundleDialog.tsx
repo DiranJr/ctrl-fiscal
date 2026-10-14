@@ -2,12 +2,17 @@ import React, { useEffect, useRef, useState } from 'react';
 import type { BundleFormat, BundleRequest, JobStatusResponse } from '@ctrl-fiscal/api-client';
 import { Alert, Badge, Button, Modal, ProgressBar } from '@ctrl-fiscal/ui';
 import { useFiscal, logSafe } from '../../context/FiscalContext.js';
+import { Indisponivel, NotaSelecionada, conferirDisponibilidade, rotuloNota } from './selecaoNotas.js';
 
 export interface BundleScope {
   /** 'selection' = notas marcadas; 'all' = TODOS os resultados do filtro atual (além da página exibida). */
   kind: 'selection' | 'all';
+  /** Workspace fixado ao abrir: trocar de workspace fecha o diálogo e nada é enviado para o outro. */
+  companyId: string;
   count: number;
   ids?: string[];
+  /** Identificação das notas selecionadas (para avisos e para nomear pendências). */
+  itens?: NotaSelecionada[];
   filters?: BundleRequest['filters'];
   environment?: string;
 }
@@ -15,8 +20,15 @@ export interface BundleScope {
 const LIMITS: Record<BundleFormat, number> = { PDF: 1000, PDF_XML: 1000, XML: 5000 };
 const FORMAT_LABEL: Record<BundleFormat, string> = { PDF: 'PDF (DANFSe)', XML: 'XML original', PDF_XML: 'PDF + XML' };
 
-export const BundleDialog: React.FC<{ scope: BundleScope; onClose: () => void }> = ({ scope, onClose }) => {
-  const { clients, currentCompany, showToast } = useFiscal();
+export const BundleDialog: React.FC<{ scope: BundleScope; onClose: () => void; onRemover?: (ids: string[]) => void }> = ({
+  scope, onClose, onRemover,
+}) => {
+  const { clients, showToast } = useFiscal();
+  const companyId = scope.companyId;
+  const [indisponiveis, setIndisponiveis] = useState<Indisponivel[] | null>(null);
+  const [conferindo, setConferindo] = useState(false);
+  const porId = new Map((scope.itens || []).map((n) => [n.id, n] as const));
+  const porChave = new Map((scope.itens || []).filter((n) => n.access_key).map((n) => [n.access_key!, n] as const));
   const [format, setFormat] = useState<BundleFormat>('PDF_XML');
   const [job, setJob] = useState<JobStatusResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -30,7 +42,7 @@ export const BundleDialog: React.FC<{ scope: BundleScope; onClose: () => void }>
   const poll = (jobId: string, delay = 1000) => {
     timer.current = window.setTimeout(async () => {
       try {
-        const j = await clients.fiscal.getJobStatus(currentCompany!.id, jobId);
+        const j = await clients.fiscal.getJobStatus(companyId, jobId);
         setJob(j);
         if (j.status === 'QUEUED' || j.status === 'RUNNING') poll(jobId, Math.min(delay * 1.4, 5000));
       } catch (err) {
@@ -41,29 +53,39 @@ export const BundleDialog: React.FC<{ scope: BundleScope; onClose: () => void }>
   };
 
   const start = async () => {
-    if (!currentCompany) return;
     setStarting(true);
     setError(null);
+    setIndisponiveis(null);
     try {
       const req: BundleRequest = scope.kind === 'selection'
         ? { format, document_ids: scope.ids, environment: scope.environment }
         : { format, filters: scope.filters, environment: scope.environment };
-      const r = await clients.fiscal.createBundle(currentCompany.id, req);
+      const r = await clients.fiscal.createBundle(companyId, req);
       setJob({ id: r.job_id, status: 'QUEUED', processed_count: 0, error_count: 0, errors: [] } as JobStatusResponse);
       poll(r.job_id, 600);
     } catch (err) {
       logSafe('lote', err);
-      const p = (err as { problem?: { detail?: string } })?.problem;
+      const p = (err as { problem?: { detail?: string; code?: string } })?.problem;
       setError(p?.detail || 'Não foi possível iniciar o download em lote.');
+      // O servidor só informa QUANTAS notas não estão disponíveis: confere uma a uma para mostrar quais e por quê.
+      if (p?.code === 'BUNDLE_DOCUMENTS_NOT_FOUND' && scope.ids?.length) {
+        setConferindo(true);
+        try {
+          setIndisponiveis(await conferirDisponibilidade(scope.ids, (id) => clients.fiscal.getDocument(companyId, id),
+            (id) => porId.get(id)?.environment ?? null));
+        } finally {
+          setConferindo(false);
+        }
+      }
     } finally {
       setStarting(false);
     }
   };
 
   const download = async () => {
-    if (!currentCompany || !job) return;
+    if (!job) return;
     try {
-      await clients.fiscal.saveJobFileToDisk(currentCompany.id, job.id);
+      await clients.fiscal.saveJobFileToDisk(companyId, job.id);
       showToast('Download iniciado. O arquivo será salvo pelo navegador.', 'success');
     } catch (err) {
       logSafe('lote', err);
@@ -78,6 +100,14 @@ export const BundleDialog: React.FC<{ scope: BundleScope; onClose: () => void }>
   const total = res.documents ?? scope.count;
   const pct = job && total ? (job.processed_count / total) * 100 : null;
   const overLimit = scope.count > LIMITS[format];
+  const itens = scope.itens || [];
+  const semXml = format !== 'PDF' ? itens.filter((n) => !n.xml_available) : [];
+  const semPdf = format !== 'XML' ? itens.filter((n) => !n.danfse_available) : [];
+  const removiveis = (indisponiveis || []).filter((i) => i.definitivo).map((i) => i.id);
+  const nomeDoErro = (file?: string | null) => {
+    const n = (file && (porId.get(file) || porChave.get(file))) || null;
+    return n ? rotuloNota(n) : (file || '').slice(-12);
+  };
 
   return (
     <Modal isOpen onClose={onClose} title="Baixar notas em lote" maxWidth="560px"
@@ -120,6 +150,13 @@ export const BundleDialog: React.FC<{ scope: BundleScope; onClose: () => void }>
             fica disponível por 24 horas.
           </p>
           {overLimit && <Alert variant="warning">Acima do limite deste formato. Refine os filtros ou escolha “XML original”.</Alert>}
+          {(semXml.length > 0 || semPdf.length > 0) && (
+            <Alert variant="warning" title="Arquivos indisponíveis em parte das notas">
+              {semXml.length > 0 && <div>{semXml.length} sem XML original: {semXml.slice(0, 5).map(rotuloNota).join(', ')}{semXml.length > 5 ? '…' : ''}.</div>}
+              {semPdf.length > 0 && <div>{semPdf.length} sem DANFSe (PDF): {semPdf.slice(0, 5).map(rotuloNota).join(', ')}{semPdf.length > 5 ? '…' : ''}.</div>}
+              <div>Elas entram no manifesto como pendência, com o motivo; os demais arquivos são incluídos.</div>
+            </Alert>
+          )}
         </fieldset>
       )}
       {job && (
@@ -142,7 +179,7 @@ export const BundleDialog: React.FC<{ scope: BundleScope; onClose: () => void }>
               {job.errors.length > 0 && (
                 <ul style={{ paddingLeft: '1.25rem', maxHeight: '10rem', overflow: 'auto', fontSize: '0.8125rem' }}>
                   {job.errors.slice(0, 20).map((e, i) => (
-                    <li key={i}><span className="ui-mono">{(e.file || '').slice(-12)}</span> — {e.message}</li>
+                    <li key={i}><span className="ui-mono">{nomeDoErro(e.file)}</span> — {e.message}</li>
                   ))}
                 </ul>
               )}
@@ -150,7 +187,29 @@ export const BundleDialog: React.FC<{ scope: BundleScope; onClose: () => void }>
           )}
         </div>
       )}
-      {error && <div style={{ marginTop: '0.75rem' }}><Alert variant="error">{error}</Alert></div>}
+      {error && <div style={{ marginTop: '0.75rem' }}><Alert variant="error">{error} A seleção foi mantida.</Alert></div>}
+      {conferindo && <p role="status" style={{ marginTop: '0.5rem', fontSize: '0.8125rem' }}>Conferindo quais notas estão indisponíveis…</p>}
+      {indisponiveis && (
+        <div role="region" aria-label="Notas indisponíveis" style={{ marginTop: '0.75rem', fontSize: '0.8125rem' }}>
+          {indisponiveis.length === 0 ? (
+            <p>Todas as notas estão disponíveis agora. Tente gerar novamente.</p>
+          ) : (
+            <>
+              <p style={{ fontWeight: 600 }}>Notas que não podem entrar no lote:</p>
+              <ul style={{ paddingLeft: '1.25rem', maxHeight: '10rem', overflow: 'auto' }}>
+                {indisponiveis.map((i) => (
+                  <li key={i.id}>{porId.get(i.id) ? rotuloNota(porId.get(i.id)!) : `Documento ${i.id.slice(0, 8)}`} — {i.motivo}</li>
+                ))}
+              </ul>
+              {removiveis.length > 0 && onRemover && (
+                <Button variant="outline" size="sm" onClick={() => { onRemover(removiveis); onClose(); }}>
+                  Remover {removiveis.length} da seleção
+                </Button>
+              )}
+            </>
+          )}
+        </div>
+      )}
     </Modal>
   );
 };

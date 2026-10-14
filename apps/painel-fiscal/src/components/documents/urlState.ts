@@ -53,8 +53,22 @@ function writeParams(f: DocFilters, doc: string | null, push: boolean) {
   window.history[push ? 'pushState' : 'replaceState']({}, '', url.toString());
 }
 
-export function useDocumentUrlState() {
-  const [filters, setFiltersState] = useState<DocFilters>(readFilters);
+const FILTER_KEYS = ['q', 'comp', 'from', 'to', 'env', 'status', 'review', 'ret', 'rtype', 'rmatch', 'wmin', 'wmax', 'page', 'doc'];
+
+/**
+ * `retomar`: filtros a usar quando a tela abre SEM parâmetros na URL (navegação interna pelo menu), para voltar à
+ * mesma consulta e página. Links com filtros na URL sempre prevalecem.
+ */
+export function useDocumentUrlState(retomar?: () => DocFilters | null) {
+  const [filters, setFiltersState] = useState<DocFilters>(() => {
+    const p = new URLSearchParams(window.location.search);
+    const salvo = FILTER_KEYS.some((k) => p.has(k)) ? null : retomar?.();
+    if (salvo) {
+      writeParams(salvo, null, false);
+      return salvo;
+    }
+    return readFilters();
+  });
   const [openDoc, setOpenDocState] = useState<string | null>(() => new URLSearchParams(window.location.search).get('doc'));
 
   useEffect(() => {

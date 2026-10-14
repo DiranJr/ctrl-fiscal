@@ -12,7 +12,8 @@ import {
 } from '@ctrl-fiscal/ui';
 import { useFiscal, logSafe } from '../../context/FiscalContext.js';
 import { BundleDialog, BundleScope } from './BundleDialog.js';
-import { EMPTY, activeAdvancedCount, toApiFilter, useDocumentUrlState, useMediaQuery } from './urlState.js';
+import { DocFilters, EMPTY, activeAdvancedCount, toApiFilter, useDocumentUrlState, useMediaQuery } from './urlState.js';
+import { NotaSelecionada, resumo, rotuloNota, selecaoNotas, useSelecaoNotas } from './selecaoNotas.js';
 import type { ViewerMode } from './DocumentViewer.js';
 import { saveBlob } from './saveBlob.js';
 import { IbsCbsOficialSection } from './IbsCbsOficialSection.js';
@@ -44,7 +45,11 @@ export const DocumentsWorkspace: React.FC<DocumentsWorkspaceProps> = ({
   direction, title, description, primaryAction, counterpartLabel, renderDetailExtras, showReviewColumn,
 }) => {
   const { clients, currentCompany } = useFiscal();
-  const { filters, setFilters, openDoc, openDocument } = useDocumentUrlState();
+  const { filters, setFilters, openDoc, openDocument } = useDocumentUrlState(
+    () => (currentCompany ? (selecaoNotas.ultimaConsulta(currentCompany.id, direction) as DocFilters | null) : null),
+  );
+  // Seleção acumulada entre pesquisas e páginas, pelo ID da nota; vale para este workspace, direção e ambiente.
+  const sel = useSelecaoNotas({ company: currentCompany?.id || '', direction, env: filters.env });
   const isMobile = useMediaQuery('(max-width: 767px)');
   const [queryInput, setQueryInput] = useState(filters.q);
   const debouncedQuery = useDebouncedValue(queryInput, 400);
@@ -53,8 +58,7 @@ export const DocumentsWorkspace: React.FC<DocumentsWorkspaceProps> = ({
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reloadTick, setReloadTick] = useState(0);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [allResults, setAllResults] = useState(false);
+  const [verSelecionadas, setVerSelecionadas] = useState(false);
   const [bundleScope, setBundleScope] = useState<BundleScope | null>(null);
   const [viewer, setViewer] = useState<{ doc: FiscalDocument; mode: ViewerMode } | null>(null);
   const [filtersDrawer, setFiltersDrawer] = useState(false);
@@ -67,11 +71,13 @@ export const DocumentsWorkspace: React.FC<DocumentsWorkspaceProps> = ({
   const apiFilter = useMemo(() => toApiFilter(filters, direction), [filters, direction]);
   const filterKey = JSON.stringify({ ...apiFilter, env: filters.env });
 
-  // Mudou o filtro → a seleção anterior deixa de valer.
+  // Busca, filtros e página NÃO apagam a seleção; ficam guardados para retomar a consulta ao voltar à tela.
+  useEffect(() => { selecaoNotas.guardarFiltros(sel.chave, filters); }, [sel.chave, filters]);
+  // Outro workspace, direção ou ambiente: a seleção é outra; diálogos do contexto anterior são fechados.
   useEffect(() => {
-    setSelected(new Set());
-    setAllResults(false);
-  }, [filterKey]);
+    setBundleScope(null);
+    setVerSelecionadas(false);
+  }, [sel.chave]);
 
   useEffect(() => {
     if (!currentCompany) return;
@@ -109,10 +115,14 @@ export const DocumentsWorkspace: React.FC<DocumentsWorkspaceProps> = ({
       setDetail(inPage);
       return;
     }
-    clients.fiscal.getDocument(currentCompany.id, openDoc).then(setDetail).catch((err) => {
+    let cancelled = false; // resposta atrasada (outra nota ou outro workspace) é descartada
+    clients.fiscal.getDocument(currentCompany.id, openDoc).then((d) => !cancelled && setDetail(d)).catch((err) => {
       logSafe('documento', err);
-      openDocument(null);
+      if (!cancelled) openDocument(null);
     });
+    return () => {
+      cancelled = true;
+    };
   }, [openDoc, docs, currentCompany, clients.fiscal, openDocument]);
 
   const reload = useCallback(() => setReloadTick((t) => t + 1), []);
@@ -202,9 +212,14 @@ export const DocumentsWorkspace: React.FC<DocumentsWorkspaceProps> = ({
     },
   ];
 
-  const pageIds = docs.map((d) => d.id);
-  const allPageSelected = pageIds.length > 0 && pageIds.every((id) => selected.has(id));
-  const selectionCount = allResults ? total : selected.size;
+  const selected = useMemo(() => new Set(sel.itens.keys()), [sel.itens]);
+  const selectionCount = sel.itens.size;
+  const visibleSelected = docs.filter((d) => selected.has(d.id)).length;
+  const notas = (n: number) => `${n} ${n === 1 ? 'nota' : 'notas'}`;
+  const abrirDownload = () => setBundleScope({
+    kind: 'selection', companyId: currentCompany!.id, count: selectionCount, ids: Array.from(sel.itens.keys()),
+    itens: Array.from(sel.itens.values()), environment: filters.env || undefined,
+  });
   const advCount = activeAdvancedCount(filters);
 
   const advanced = (
@@ -275,33 +290,25 @@ export const DocumentsWorkspace: React.FC<DocumentsWorkspaceProps> = ({
                 <Icon name="filter" size={16} /> Filtros{advCount ? ` (${advCount})` : ''}
               </Button>
             )}
-            <Button variant="ghost" onClick={() => { setQueryInput(''); setFilters({ ...EMPTY }); }}>Limpar filtros</Button>
+            {/* Limpa só a pesquisa e os filtros: a seleção e o ambiente (contexto da seleção) continuam. */}
+            <Button variant="ghost" onClick={() => { setQueryInput(''); setFilters({ ...EMPTY, env: filters.env }); }}>Limpar filtros</Button>
           </div>
         </div>
         {!isMobile && <FilterPanel activeCount={advCount}>{advanced}</FilterPanel>}
       </section>
 
-      {(selected.size > 0 || allResults) && (
+      {selectionCount > 0 && (
         <div className="pf-bulkbar" role="region" aria-label="Seleção">
           <div aria-live="polite">
-            {allResults ? (
-              <>Todos os <strong>{total}</strong> resultados do filtro estão selecionados (todas as páginas).{' '}
-                <button type="button" className="pf-linkbtn" onClick={() => { setAllResults(false); setSelected(new Set()); }}>Limpar seleção</button></>
-            ) : (
-              <>
-                <strong>{selected.size}</strong> {selected.size === 1 ? 'nota selecionada' : 'notas selecionadas'}
-                {allPageSelected && total > docs.length ? <> (esta página).{' '}
-                  <button type="button" className="pf-linkbtn" onClick={() => setAllResults(true)}>
-                    Selecionar todos os {total} resultados do filtro
-                  </button></> : '.'}{' '}
-                <button type="button" className="pf-linkbtn" onClick={() => setSelected(new Set())}>Limpar</button>
-              </>
-            )}
+            <strong>{selectionCount}</strong> {selectionCount === 1 ? 'nota selecionada' : 'notas selecionadas'}
+            {selectionCount > visibleSelected
+              ? <span style={{ color: 'var(--color-text-muted)' }}> ({visibleSelected} nesta página; as demais vêm de outras pesquisas ou páginas)</span>
+              : null}.{' '}
+            <button type="button" className="pf-linkbtn" onClick={() => setVerSelecionadas(true)} aria-haspopup="dialog">Ver selecionadas</button>{' · '}
+            <button type="button" className="pf-linkbtn" onClick={sel.limpar}>Limpar seleção</button>
           </div>
-          <Button variant="primary" size="sm" onClick={() => setBundleScope(allResults
-            ? { kind: 'all', count: total, filters: { ...apiFilter }, environment: filters.env || undefined }
-            : { kind: 'selection', count: selected.size, ids: Array.from(selected), environment: filters.env || undefined })}>
-            <Icon name="download" size={16} /> Baixar {selectionCount} {selectionCount === 1 ? 'nota' : 'notas'}…
+          <Button variant="primary" size="sm" onClick={abrirDownload}>
+            <Icon name="download" size={16} /> Baixar {notas(selectionCount)}…
           </Button>
         </div>
       )}
@@ -330,32 +337,36 @@ export const DocumentsWorkspace: React.FC<DocumentsWorkspaceProps> = ({
             selected,
             rowLabel: (d: FiscalDocument) => `NFS-e ${d.number || d.access_key || ''}`,
             onToggle: (id) => {
-              setAllResults(false);
-              setSelected((s) => {
-                const n = new Set(s);
-                n.has(id) ? n.delete(id) : n.add(id);
-                return n;
-              });
+              const d = docs.find((x) => x.id === id);
+              if (d) sel.alternar(resumo(d, direction));
             },
-            onTogglePage: (checked) => {
-              setAllResults(false);
-              setSelected((s) => {
-                const n = new Set(s);
-                pageIds.forEach((id) => (checked ? n.add(id) : n.delete(id)));
-                return n;
-              });
-            },
+            // Só a página exibida; o que foi marcado em outras pesquisas e páginas continua.
+            onTogglePage: (checked) => sel.marcarPagina(docs.map((d) => resumo(d, direction)), checked),
           }}
         />
       )}
-      {!loading && !loadError && total > 0 && selected.size === 0 && !allResults && (
+      {!loading && !loadError && total > 0 && (
         <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+          {/* Independente da seleção: usa o filtro atual (todas as páginas). */}
           <Button variant="outline" size="sm"
-            onClick={() => setBundleScope({ kind: 'all', count: total, filters: { ...apiFilter }, environment: filters.env || undefined })}>
-            <Icon name="download" size={16} /> Baixar todos os {total} resultados…
+            onClick={() => setBundleScope({ kind: 'all', companyId: currentCompany!.id, count: total, filters: { ...apiFilter },
+              environment: filters.env || undefined })}>
+            <Icon name="download" size={16} /> Baixar todos os {total} resultados do filtro…
           </Button>
         </div>
       )}
+
+      <Drawer isOpen={verSelecionadas} onClose={() => setVerSelecionadas(false)} title={`Notas selecionadas (${selectionCount})`}
+        subtitle="De todas as pesquisas e páginas desta consulta" width={isMobile ? '100%' : '560px'}
+        footer={<>
+          <Button variant="outline" onClick={() => setVerSelecionadas(false)}>Fechar</Button>
+          <Button variant="primary" disabled={!selectionCount} onClick={() => { setVerSelecionadas(false); abrirDownload(); }}>
+            <Icon name="download" size={16} /> Baixar {notas(selectionCount)}…
+          </Button>
+        </>}>
+        <ListaSelecionadas itens={Array.from(sel.itens.values())} counterpartLabel={counterpartLabel}
+          onAbrir={(id) => { setVerSelecionadas(false); openDocument(id); }} onRemover={(id) => sel.remover([id])} />
+      </Drawer>
 
       <Drawer isOpen={filtersDrawer} onClose={() => setFiltersDrawer(false)} title="Filtros avançados" side="right" width="100%"
         footer={<Button variant="primary" onClick={() => setFiltersDrawer(false)}>Ver {total} resultados</Button>}>
@@ -382,8 +393,41 @@ export const DocumentsWorkspace: React.FC<DocumentsWorkspaceProps> = ({
           <DocumentViewer doc={viewer.doc} mode={viewer.mode} onClose={() => setViewer(null)} />
         </Suspense>
       )}
-      {bundleScope && <BundleDialog scope={bundleScope} onClose={() => setBundleScope(null)} />}
+      {bundleScope && <BundleDialog scope={bundleScope} onClose={() => setBundleScope(null)} onRemover={sel.remover} />}
     </div>
+  );
+};
+
+const ListaSelecionadas: React.FC<{
+  itens: NotaSelecionada[];
+  counterpartLabel: string;
+  onAbrir: (id: string) => void;
+  onRemover: (id: string) => void;
+}> = ({ itens, counterpartLabel, onAbrir, onRemover }) => {
+  if (!itens.length) return <p style={{ fontSize: '0.875rem' }}>Nenhuma nota selecionada.</p>;
+  return (
+    <ul aria-label="Notas selecionadas" style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+      {itens.map((n) => {
+        const faltas = [!n.xml_available && 'sem XML original', !n.danfse_available && 'sem DANFSe (PDF)'].filter(Boolean);
+        return (
+          <li key={n.id} style={{ border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', padding: '0.625rem 0.75rem',
+            display: 'flex', gap: '0.75rem', alignItems: 'flex-start', justifyContent: 'space-between', minWidth: 0 }}>
+            <div style={{ minWidth: 0, fontSize: '0.8125rem' }}>
+              <button type="button" className="pf-linkbtn" onClick={() => onAbrir(n.id)}>{rotuloNota(n)}</button>
+              <div className="ui-mono" style={{ fontSize: '0.6875rem', color: 'var(--color-text-subtle)', overflowWrap: 'anywhere' }}>{n.access_key || ''}</div>
+              <div>{counterpartLabel}: {n.counterpart || '—'}{n.counterpart_doc ? ` (${n.counterpart_doc})` : ''}</div>
+              <div style={{ color: 'var(--color-text-muted)' }}>
+                {n.issued_at ? `Emissão ${new Date(n.issued_at).toLocaleDateString('pt-BR')}` : 'Sem data de emissão'} · {money(n.amount)}
+              </div>
+              {faltas.length > 0 && (
+                <div>Atenção: {faltas.join(' e ')}. Entra no ZIP como pendência no manifesto.</div>
+              )}
+            </div>
+            <Button variant="ghost" size="sm" onClick={() => onRemover(n.id)} aria-label={`Remover ${rotuloNota(n)} da seleção`}>Remover</Button>
+          </li>
+        );
+      })}
+    </ul>
   );
 };
 
