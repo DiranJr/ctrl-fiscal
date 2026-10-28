@@ -10,6 +10,7 @@ import { OperacaoTributaria } from '../components/OperacaoTributaria.js';
 import { useFiscal, logSafe } from '../context/FiscalContext.js';
 import { PendenciasRascunho } from '../components/PendenciasRascunho.js';
 import { normalizarPercentual, trocaDeUnidade } from '../components/tributosAproximados.js';
+import { conflitoPrestacao, dataBr, diaNoFuso, sugestaoAgendamento } from '../components/datasEmissao.js';
 import { useUnsavedChanges } from '@ctrl-fiscal/ui';
 import {
   Table,
@@ -810,8 +811,14 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
 
   // Emitir agora ou agendar o lote (as duas ações exigem revisão e confirmação; mesmas validações no servidor)
   const [batchMode, setBatchMode] = useState<ModoEmissao>('NOW');
+  // E0015: a prestação não pode ser posterior à emissão (hoje, em "Emitir agora"; o dia programado, ao agendar),
+  // no fuso da empresa. O servidor confere de novo; aqui a pessoa vê o conflito antes e ajusta.
+  const conflitoLote = isScheduleModalOpen && currentCompany
+    ? conflitoPrestacao(drafts.filter((d) => selectedDraftIds.has(d.id)).map((d) => d.service_date), batchMode,
+      diaNoFuso(new Date(), currentCompany.timezone), scheduleDateTime)
+    : null;
   const handleConfirmBatchScheduling = async () => {
-    if (!currentCompany || selectedDraftIds.size === 0 || !batchReviewConfirmed || (isProd && !prodConfirmed)) return;
+    if (!currentCompany || selectedDraftIds.size === 0 || !batchReviewConfirmed || (isProd && !prodConfirmed) || conflitoLote) return;
     const companyId = currentCompany.id;
     const timezone = currentCompany.timezone;
     if (batchMode === 'SCHEDULED' && !scheduleDateTime) {
@@ -1705,9 +1712,10 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
             <Button variant="outline" onClick={() => setIsScheduleModalOpen(false)}>
               Cancelar
             </Button>
-            <Button variant="primary" isLoading={isSchedulingBatch} disabled={!batchReviewConfirmed || (isProd && !prodConfirmed)}
+            <Button variant="primary" isLoading={isSchedulingBatch} disabled={!batchReviewConfirmed || (isProd && !prodConfirmed) || !!conflitoLote}
               onClick={handleConfirmBatchScheduling}
-              title={!batchReviewConfirmed ? 'Marque “Conferi os dados acima” para continuar'
+              title={conflitoLote ? 'Ajuste a data: a prestação é posterior à emissão'
+                : !batchReviewConfirmed ? 'Marque “Conferi os dados acima” para continuar'
                 : isProd && !prodConfirmed ? 'Confirme a emissão em produção' : undefined}>
               {batchMode === 'NOW' ? 'Emitir agora' : 'Confirmar Agendamento do Lote'}
             </Button>
@@ -1747,6 +1755,20 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
               />
             </div>
             </>)}
+            {conflitoLote && (
+              <div>
+                <Alert variant="error" title="Prestação posterior à emissão">
+                  <p>{conflitoLote.mensagem}</p>
+                  <Button variant="outline" size="sm" style={{ marginTop: '0.5rem' }} onClick={() => {
+                    setBatchMode('SCHEDULED');
+                    setProdConfirmed(false);
+                    setScheduleDateTime(sugestaoAgendamento(conflitoLote.prestacao));
+                  }}>
+                    Agendar para {dataBr(conflitoLote.prestacao)} às 00:05
+                  </Button>
+                </Alert>
+              </div>
+            )}
           </section>
 
           <section className="pf-form-stack" aria-label="Revisão das notas do lote">
@@ -1805,6 +1827,22 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
             Um cabeçalho Idempotency-Key estável é gerado para prevenir duplicidade de envio.
           </Alert>
 
+          {conflitoLote && (
+            // Lembrete junto ao botão (o detalhe fica em "Quando transmitir", no início do diálogo).
+            <div className="pf-help" style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center' }}>
+              <span>
+                {batchMode === 'NOW' ? '“Emitir agora” está bloqueado' : 'O agendamento está bloqueado'}: a prestação
+                ({dataBr(conflitoLote.prestacao)}) é posterior à emissão. Veja “Quando transmitir”, no início.
+              </span>
+              <Button variant="outline" size="sm" onClick={() => {
+                setBatchMode('SCHEDULED');
+                setProdConfirmed(false);
+                setScheduleDateTime(sugestaoAgendamento(conflitoLote.prestacao));
+              }}>
+                Agendar para {dataBr(conflitoLote.prestacao)} às 00:05
+              </Button>
+            </div>
+          )}
           <ConfirmacaoRevisao checked={batchReviewConfirmed} onChange={setBatchReviewConfirmed} />
           {isProd && currentCompany && (
             <ConfirmacaoProducao empresa={{ name: currentCompany.name, cnpj: currentCompany.cnpj }}

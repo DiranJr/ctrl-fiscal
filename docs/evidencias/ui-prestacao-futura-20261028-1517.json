@@ -1,0 +1,72 @@
+{
+ "ambiente": "http://127.0.0.1:8098",
+ "governo": "simulado",
+ "dados": "fictícios",
+ "resultados": [
+  {
+   "teste": "rascunho com prestação futura: salvo; validação só AVISA (sem bloqueio E0015)",
+   "resultado": "PASS",
+   "obtido": "[('SERVICE_DATE_FUTURE', 'warning')]"
+  },
+  {
+   "teste": "editor: prestação futura salva e reaberta",
+   "resultado": "PASS",
+   "obtido": ""
+  },
+  {
+   "teste": "“Emitir agora”: conflito explicado (E0015) e botão desabilitado",
+   "resultado": "PASS",
+   "obtido": "✕\nPrestação posterior à emissão\n\nA prestação (31/10/2026) é posterior a hoje (28/10/2026): não é possível emitir agora, porque a data da prestação não"
+  },
+  {
+   "teste": "lembrete junto ao botão explica o bloqueio",
+   "resultado": "PASS",
+   "obtido": ""
+  },
+  {
+   "teste": "sugestão: agenda no dia da prestação às 00:05 e o conflito some",
+   "resultado": "PASS",
+   "obtido": "2026-10-31T00:05"
+  },
+  {
+   "teste": "agendamento anterior à prestação: explica e pede ajuste (botão desabilitado)",
+   "resultado": "PASS",
+   "obtido": "✕\nPrestação posterior à emissão\n\nA emissão programada (30/10/2026 23:59) é anterior à prestação (31/10/2026): a data da prestação não pode ser posteri"
+  },
+  {
+   "teste": "agendado no dia da prestação (00:05 no fuso da empresa)",
+   "resultado": "PASS",
+   "obtido": "2026-10-31 00:05:00-03:00"
+  },
+  {
+   "teste": "servidor: “emitir agora” e agendamento anterior recusados (422, E0015, com as datas)",
+   "resultado": "PASS",
+   "obtido": "422/422"
+  },
+  {
+   "teste": "servidor: rascunho recusado continua editável (fora da fila)",
+   "resultado": "PASS",
+   "obtido": ""
+  },
+  {
+   "teste": "Nova NFS-e: “Emitir agora” bloqueado com prestação futura, com explicação",
+   "resultado": "PASS",
+   "obtido": ""
+  },
+  {
+   "teste": "Nova NFS-e: agendamento do dia 01 serve para a prestação; conflito some",
+   "resultado": "PASS",
+   "obtido": ""
+  },
+  {
+   "teste": "celular: conflito visível no diálogo, sem rolagem horizontal",
+   "resultado": "PASS",
+   "obtido": "excesso=0px"
+  },
+  {
+   "teste": "sem violação de CSP",
+   "resultado": "PASS",
+   "obtido": ""
+  }
+ ]
+}

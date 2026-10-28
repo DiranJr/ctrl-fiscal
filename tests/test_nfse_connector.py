@@ -43,10 +43,14 @@ TEST_CA_PEM = _TEST_CA_CERT.public_bytes(serialization.Encoding.PEM)
 TEST_TRUST = {"trust_roots_pem": TEST_CA_PEM, "trust_intermediates_pem": b"", "revocation_mode": "test-skip"}
 
 
+RELOGIO_SUITE = datetime(2026, 10, 20, 13, 0, tzinfo=timezone.utc)
+
+
 def make_cert(cnpj_value: str = CNPJ, days: int = 365, client_auth: bool = True, start: datetime | None = None,
               self_signed: bool = False, ca: str = "test", crl_url: str | None = None):
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    start = start or datetime.now(timezone.utc) - timedelta(days=1)
+    # Valido no relogio real E no relogio fixo da suite (conftest: 20/10/2026 10:00 em Sao Paulo).
+    start = start or min(datetime.now(timezone.utc), RELOGIO_SUITE) - timedelta(days=1)
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "EMPRESA TESTE (CERTIFICADO DE TESTE)")])
     ca_key, ca_cert = (_TEST_CA, _TEST_CA_CERT) if ca == "test" else (_OTHER_CA, _OTHER_CA_CERT)
     issuer, signer = (name, key) if self_signed else (ca_cert.subject, ca_key)

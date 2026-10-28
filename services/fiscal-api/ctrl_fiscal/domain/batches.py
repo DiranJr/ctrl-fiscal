@@ -92,12 +92,14 @@ def create_batch(
         raise DomainError(422, "BATCH_INVALID", "Um ou mais rascunhos são inválidos.", errors)
 
     snapshots: dict[str, tuple[dict, dict]] = {}
+    # E0015 contra a data EFETIVA de emissão: emitir agora = agora; agendar = horário programado (no fuso da empresa).
+    emissao = max(scheduled_at, now)
     for did in ids:
         d = found[did]
         customer = core.customer(company.id, d.customer_id)
         profile = core.service_profile(company.id, d.service_profile_id) if d.service_profile_id else None
         issues = validate_draft(d, company, customer, now, profile,
-                                production_emission_enabled=production_emission_enabled)
+                                production_emission_enabled=production_emission_enabled, emissao=emissao, modo=mode)
         d.issues = issues
         bad = [i for i in issues if i["severity"] == "error"]
         if bad:

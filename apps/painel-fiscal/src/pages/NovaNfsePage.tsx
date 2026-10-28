@@ -7,6 +7,7 @@ import { ServiceProfilePicker } from '../components/ServiceProfilePicker.js';
 import { RevisaoNfse, ConfirmacaoRevisao } from '../components/RevisaoNfse.js';
 import { PendenciasRascunho } from '../components/PendenciasRascunho.js';
 import { normalizarPercentual, trocaDeUnidade } from '../components/tributosAproximados.js';
+import { conflitoPrestacao, diaNoFuso } from '../components/datasEmissao.js';
 import { ConfirmacaoProducao, montarConfirmacaoProducao, ModoEmissao } from '../components/ConfirmacaoProducao.js';
 import { OperacaoTributaria } from '../components/OperacaoTributaria.js';
 import { ScreenSection } from '../components/screen/ScreenSection.js';
@@ -724,6 +725,12 @@ export const NovaNfsePage: React.FC<{ onNavigate: (route: string) => void }> = (
 
   const selectedCustomer = customers.find((c) => c.id === selectedCustomerId);
   const schedulePreview = currentCompany ? calculateNextMonthFirstMinute(new Date(), currentCompany.timezone) : null;
+  // E0015: prestação posterior à emissão (hoje ou o dia 01 programado), no fuso da empresa.
+  const hojeEmpresa = currentCompany ? diaNoFuso(new Date(), currentCompany.timezone) : '';
+  const conflitoEmissao = currentCompany
+    ? conflitoPrestacao([serviceDate], emitMode, hojeEmpresa, schedulePreview?.localInputString) : null;
+  const agendamentoServe = !!schedulePreview
+    && !conflitoPrestacao([serviceDate], 'SCHEDULED', hojeEmpresa, schedulePreview.localInputString);
   const envConfig = getEnvironmentBadgeConfig(integrationStatus?.environment, integrationStatus?.simulated !== false);
   const isRestricted = integrationStatus?.environment === 'restricted' || currentCompany?.environment === 'restricted';
   const reviewPayload = step === 2 ? getPreparedPayload(false) : null;
@@ -1285,6 +1292,21 @@ export const NovaNfsePage: React.FC<{ onNavigate: (route: string) => void }> = (
                 onChange={() => { setEmitMode('SCHEDULED'); setProdConfirmed(false); }} />
               <span><strong>Agendar emissão</strong> para {schedulePreview ? schedulePreview.displayFormatted : '01 às 00:01'} ({currentCompany?.timezone}).</span>
             </label>
+            {conflitoEmissao && (
+              <div style={{ marginTop: '0.5rem' }}>
+                <Alert variant="error" title="Prestação posterior à emissão">
+                  <p>{conflitoEmissao.mensagem}</p>
+                  {emitMode === 'NOW' && agendamentoServe ? (
+                    <Button variant="outline" size="sm" style={{ marginTop: '0.5rem' }}
+                      onClick={() => { setEmitMode('SCHEDULED'); setProdConfirmed(false); }}>
+                      Agendar para {schedulePreview?.displayFormatted}
+                    </Button>
+                  ) : (
+                    <p style={{ marginTop: '0.5rem' }}>Salve como rascunho e agende em Rascunhos → “Emitir ou agendar”, escolhendo a data.</p>
+                  )}
+                </Alert>
+              </div>
+            )}
           </fieldset>
           <ConfirmacaoRevisao checked={reviewConfirmed} onChange={setReviewConfirmed} />
           {currentCompany?.environment === 'production' && (
@@ -1305,9 +1327,10 @@ export const NovaNfsePage: React.FC<{ onNavigate: (route: string) => void }> = (
                 Salvar como Rascunho
               </Button>
               <Button variant="primary" isLoading={isSubmitting}
-                disabled={!reviewConfirmed || (currentCompany?.environment === 'production' && !prodConfirmed)}
+                disabled={!reviewConfirmed || (currentCompany?.environment === 'production' && !prodConfirmed) || !!conflitoEmissao}
                 onClick={handleEmit}
-                title={!reviewConfirmed ? 'Marque “Conferi os dados acima” para continuar'
+                title={conflitoEmissao ? 'Ajuste a data: a prestação é posterior à emissão'
+                  : !reviewConfirmed ? 'Marque “Conferi os dados acima” para continuar'
                   : currentCompany?.environment === 'production' && !prodConfirmed ? 'Confirme a emissão em produção' : undefined}>
                 {emitMode === 'NOW' ? 'Emitir agora' : 'Agendar emissão (01 às 00:01)'}
               </Button>

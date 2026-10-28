@@ -20,8 +20,10 @@ import io
 import json
 import logging
 import ssl
+import re
 import threading
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from cryptography.hazmat.primitives import serialization
 from defusedxml import ElementTree as SafeET
@@ -297,9 +299,16 @@ class OfficialProvider:
         regra_paliq = self._paliq_conforme_convenio(company, payload)
         if regra_paliq:
             return SubmitOutcome(state="REJECTED", errors=regra_paliq)  # nada transmitido
+        agora = self._agora_oficial(company)
+        # E0015: dCompet ≤ data do dhEmi no fuso da empresa. Se o relógio oficial ainda está antes do dia da prestação
+        # (ex.: execução logo após a meia-noite com relógio local adiantado), nada é enviado e o worker tenta de novo.
+        sd = str(payload.get("service_date") or "")
+        zona = ZoneInfo(((payload.get("company") or {}).get("timezone")) or "America/Sao_Paulo")
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", sd) and sd > agora.astimezone(zona).date().isoformat():
+            raise TransmissionNotSent("DCOMPET_POSTERIOR_A_DHEMI")
         try:
             montada = dps_mod.montar(payload, environment=self.environment, serie=dps["series"], numero=int(dps["number"]),
-                                     agora=self._agora_oficial(company))
+                                     agora=agora)
         except dps_mod.DpsIncompleta as exc:
             return SubmitOutcome(state="REJECTED", errors=[{"code": f"LOCAL_{f['codigo']}", "message": f"{f['campo']}: {f['mensagem']}"}
                                                            for f in exc.faltas])

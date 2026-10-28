@@ -63,6 +63,44 @@ def dominio_issues(d, customer: dict | None) -> list[dict]:  # noqa: ANN001
     return out
 
 
+def _br(x: date) -> str:
+    return x.strftime("%d/%m/%Y")
+
+
+def datas_issues(d, company, now: datetime, emissao: datetime | None = None, modo: str | None = None) -> list[dict]:  # noqa: ANN001
+    """E0015 (Anexo I): dCompet deve ser anterior ou igual à data do dhEmi. O dhEmi é o instante REAL da transmissão
+    (E0008: nunca posterior ao processamento oficial), então a comparação depende de QUANDO a DPS será emitida, no fuso
+    da empresa:
+    - sem emissão definida (salvar ou validar o rascunho): prestação futura é aviso — o rascunho pode ser agendado;
+    - emitir agora (`emissao` = agora) ou agendar (`emissao` = data programada): erro se a emissão for anterior.
+    Vale em qualquer ambiente (regra legal, não depende de cadastro governamental)."""
+    if not d.service_date:
+        return []
+    try:
+        dc = date.fromisoformat(str(d.service_date))
+    except ValueError:
+        return []
+    zona = ZoneInfo(company.timezone)
+    if emissao is None:
+        if dc > now.astimezone(zona).date():
+            return [_issue("service_date", "SERVICE_DATE_FUTURE",
+                           f"Prestação futura (dCompet {_br(dc)}): o rascunho pode ser salvo e agendado para {_br(dc)} "
+                           "ou depois; “Emitir agora” só a partir dessa data", "E0015", "warning")]
+        return []
+    local = emissao.astimezone(zona)
+    if dc <= local.date():
+        return []
+    if modo == "NOW":
+        msg = (f"A prestação (dCompet {_br(dc)}) é posterior a hoje ({_br(local.date())}, fuso {company.timezone}): "
+               f"não é possível emitir agora, porque dCompet não pode ser posterior à data de emissão (dhEmi). Agende a "
+               f"emissão para {_br(dc)} ou depois")
+    else:
+        msg = (f"A emissão programada ({local:%d/%m/%Y %H:%M}, fuso {company.timezone}) é anterior à prestação "
+               f"(dCompet {_br(dc)}): dCompet não pode ser posterior à data de emissão (dhEmi). Ajuste o agendamento "
+               f"para {_br(dc)} ou depois")
+    return [_issue("service_date", "SERVICE_DATE_AFTER_EMISSION", msg, "E0015")]
+
+
 def negocio_issues(d, company, customer: dict | None, now: datetime) -> list[dict]:  # noqa: ANN001, C901, PLR0912, PLR0915
     out: list[dict] = []
     tax = d.tax_settings or {}
@@ -86,16 +124,12 @@ def negocio_issues(d, company, customer: dict | None, now: datetime) -> list[dic
         if op == "3" and ap_sn == "1":
             out.append(_issue("company.special_regime", "SPECIAL_REGIME_SN", "ME/EPP pelo SN não tem regime especial", "E0175"))
 
-    # ---------------------------------------------------------------- datas
+    # ---------------------------------------------------------------- datas (E0015 em datas_issues)
     if d.service_date:
         try:
-            dc = date.fromisoformat(d.service_date)
+            dc = date.fromisoformat(str(d.service_date))
         except ValueError:
             dc = None
-        today = now.astimezone(ZoneInfo(company.timezone)).date()
-        if dc and dc > today:
-            out.append(_issue("service_date", "SERVICE_DATE_AFTER_EMISSION",
-                              "dCompet não pode ser posterior à data de emissão", "E0015"))
         if dc and tax.get("ibs_cbs") and dc < IBSCBS_INICIO:
             out.append(_issue("tax_settings.ibs_cbs", "IBS_CBS_BEFORE_2026", "IBS/CBS só a partir da competência 01/01/2026", "E0850"))
 

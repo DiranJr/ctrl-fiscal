@@ -189,6 +189,7 @@ def test_domain_and_combination_rules(ostack, real):
         **base_tax, "ibs_cbs": {"operation_indicator": "100301", "cst": "000", "class_code": "200001"}})
     assert "CINDOP_NOT_IN_LIST" in _codes(ostack, real, service={**svc, "nbs_code": "101032000"}, tax_settings={
         **base_tax, "ibs_cbs": {"operation_indicator": "999999", "cst": "000", "class_code": "000001"}})
-    assert "SERVICE_DATE_AFTER_EMISSION" in _codes(ostack, real, competence="2026-10", service_date="2026-10-31")
+    # Prestação futura não bloqueia o rascunho (só emitir antes dela): ver tests/test_prestacao_futura.py.
+    assert "SERVICE_DATE_AFTER_EMISSION" not in _codes(ostack, real, competence="2026-10", service_date="2026-10-31")
     # Combinação válida não acusa nada
     assert _codes(ostack, real) == set()

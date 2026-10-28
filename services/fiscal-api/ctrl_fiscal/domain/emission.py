@@ -15,7 +15,8 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo
 from decimal import Decimal
 from typing import Callable
 
@@ -199,6 +200,22 @@ def acquire_items(
     return leased
 
 
+def espera_prestacao(snapshot: dict, now: datetime) -> datetime | None:
+    """E0015 na execução: dCompet ≤ data do dhEmi, que é o instante real da transmissão no fuso da empresa (alinhado ao
+    relógio da Sefin, com margem de segundos para trás). Antes das 00:02 do dia da prestação nada é transmitido: a
+    tentativa volta para esse horário, para o dhEmi nunca cair no dia anterior."""
+    sd = (snapshot or {}).get("service_date")
+    if not sd:
+        return None
+    try:
+        dc = date.fromisoformat(str(sd))
+    except ValueError:
+        return None
+    zona = ZoneInfo(((snapshot.get("company") or {}).get("timezone")) or "America/Sao_Paulo")
+    liberado = datetime.combine(dc, time(0, 2), tzinfo=zona)
+    return None if now >= liberado else liberado.astimezone(timezone.utc)
+
+
 def _backoff(attempts: int) -> timedelta:
     return timedelta(seconds=min(3600, 30 * 2 ** min(max(attempts - 1, 0), 7)))
 
@@ -235,6 +252,13 @@ def process_item(
             # Sucessor (ou nova tentativa): consulta antes de qualquer reenvio.
             resp = nfse.get_submission(it.submission_id, reconcile=True)
         if resp is None or resp.get("state") in ("RECEIVED", "BLOCKED", "NOT_FOUND"):
+            # Revalida a data antes de transmitir: a prestação não pode ser posterior à emissão (E0015).
+            espera = espera_prestacao(it.snapshot, clock.now())
+            if espera is not None:
+                return _finish(sessions, clock, owner, it, {"state": "DEFER", "retry_at": espera, "error": {
+                    "code": "SERVICE_DATE_NOT_REACHED",
+                    "message": "Data da prestação (dCompet) ainda não alcançada no fuso da empresa: nada transmitido; "
+                               "nova tentativa às 00:02 do dia da prestação (regra E0015)."}})
             allowed = authorize(it) if authorize is not None else True
             if isinstance(allowed, dict):
                 if it.submit_phase == "SUBMITTING" and allowed["state"] == "BLOCKED":
@@ -309,7 +333,8 @@ def _finish(sessions: sessionmaker, clock: Clock, owner: str, it: LeasedItem, re
             # Nada transmitido nesta tentativa. Com envio anterior possível (SUBMITTING), só reconsulta depois.
             err = resp["error"]
             status = "AWAITING_CONFIRMATION" if item.submit_phase == "SUBMITTING" else "SCHEDULED"
-            _apply(item, status=status, next_attempt_at=now + _backoff(item.attempts), last_error_code=err["code"],
+            _apply(item, status=status, next_attempt_at=resp.get("retry_at") or now + _backoff(item.attempts),
+                   last_error_code=err["code"],
                    last_error_message=err["message"], **common)
             if own_draft:
                 draft.status = status

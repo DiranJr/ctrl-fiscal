@@ -20,7 +20,7 @@ from ..clients import CompanyInfo, CoreClient
 from ..models import BatchItem, Document, Draft
 from . import pendencias, retencoes
 from .common import DomainError, audit, money
-from .regras_dps import dominio_issues, negocio_issues
+from .regras_dps import datas_issues, dominio_issues, negocio_issues
 
 EDITABLE_STATUSES = ("DRAFT", "REJECTED")
 TAX_KEYS = (
@@ -572,8 +572,11 @@ def operacao_issues(d: Draft) -> list[dict]:
 
 
 def validate_draft(d: Draft, company: CompanyInfo, customer: dict | None, now: datetime,
-                   profile: dict | None = None, *, production_emission_enabled: bool = False) -> list[dict]:
-    """Validações locais e de formato do leiaute verificado. Não autoriza nem transmite."""
+                   profile: dict | None = None, *, production_emission_enabled: bool = False,
+                   emissao: datetime | None = None, modo: str | None = None) -> list[dict]:
+    """Validações locais e de formato do leiaute verificado. Não autoriza nem transmite.
+    `emissao`: instante em que a DPS será emitida (emitir agora = agora; agendar = data programada). Sem ele (salvar ou
+    validar o rascunho), a prestação futura é só aviso; com ele, vale a regra E0015 contra essa data."""
     from .referencia import pendencias_atuais
 
     issues: list[dict] = profile_issues(d, profile) + operacao_issues(d) + pendencias_atuais(d)
@@ -601,8 +604,9 @@ def validate_draft(d: Draft, company: CompanyInfo, customer: dict | None, now: d
     if not re.match(r"^\d{4}-(0[1-9]|1[0-2])$", d.competence or ""):
         issues.append(_issue("competence", "COMPETENCE_INVALID", "Competência deve estar no formato AAAA-MM."))
     else:
-        current = now.astimezone(ZoneInfo(company.timezone)).strftime("%Y-%m")
-        if d.competence > current:
+        current = (emissao or now).astimezone(ZoneInfo(company.timezone)).strftime("%Y-%m")
+        # Com dCompet informado, o aviso preciso é o de prestação futura (E0015); este fica para rascunhos sem data.
+        if d.competence > current and not d.service_date:
             issues.append(_issue("competence", "COMPETENCE_IN_FUTURE", "Competência posterior ao mês atual da empresa.", "warning"))
     desc = (d.service_description or "").strip()
     if not desc:
@@ -634,6 +638,7 @@ def validate_draft(d: Draft, company: CompanyInfo, customer: dict | None, now: d
     from . import ibscbs  # noqa: PLC0415
 
     issues.extend(ibscbs.validacao_issues(d, company.fiscal_profile, d.environment))
+    issues.extend(datas_issues(d, company, now, emissao, modo))
     if company.environment == "mock":
         issues.append(_issue("environment", "SIMULATION_ONLY", "Ambiente de simulação: nenhuma NFS-e real será gerada.", "info"))
     else:
