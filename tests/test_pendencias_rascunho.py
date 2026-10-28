@@ -5,10 +5,16 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from test_emission_queue import make_draft
 
 F = "/api/fiscal/v1/companies"
 ROOT = Path(__file__).resolve().parents[1]
+# Índice publicado do Anexo I (cópia fiel conferida abaixo) e fonte oficial completa, que só existe na cópia local
+# (docs/oficial não é publicado no repositório público).
+INDICE = ROOT / "services/shared/ctrl_common/dominios/regras_anexo_i.json"
+FONTE = ROOT / "docs/oficial/regras-dps-anexo-i.json"
 
 
 def _com_pendencias(stack, world) -> dict:  # noqa: ANN001
@@ -34,8 +40,7 @@ def test_validacao_devolve_todas_as_pendencias_detalhadas(stack, world):
     assert all(i["blocking"] == (i["severity"] == "error") for i in issues)
     assert j["valid"] is (not any(i["blocking"] for i in issues))
     nbs = next(i for i in issues if i["code"] == "NBS_NOT_IN_LIST")
-    oficial = json.loads((ROOT / "docs/oficial/regras-dps-anexo-i.json").read_text(encoding="utf-8"))
-    e0316 = next(x for x in oficial["regras"] if x["codigo"] == "E0316")
+    e0316 = json.loads(INDICE.read_text(encoding="utf-8"))["regras"]["E0316"]
     assert nbs["rule"] == "E0316" and nbs["reason"] == e0316["regra"]  # texto oficial, sem alteração
     assert nbs["official_message"] == e0316["mensagem"] and "regra E0316" in nbs["reason_source"]
     assert nbs["xml_path"] == e0316["elemento"].removeprefix("NFSe/infNFSe/")
@@ -97,8 +102,10 @@ def test_destinos_de_cliente_perfil_empresa_e_certificado():
 
 
 def test_indice_de_regras_e_copia_fiel_da_fonte_oficial():
-    fonte = json.loads((ROOT / "docs/oficial/regras-dps-anexo-i.json").read_text(encoding="utf-8"))
-    idx = json.loads((ROOT / "services/shared/ctrl_common/dominios/regras_anexo_i.json").read_text(encoding="utf-8"))
+    if not FONTE.exists():
+        pytest.skip("fonte oficial do Anexo I não publicada (docs/oficial é local); conferência feita na cópia local")
+    fonte = json.loads(FONTE.read_text(encoding="utf-8"))
+    idx = json.loads(INDICE.read_text(encoding="utf-8"))
     assert idx["fonte_sha256"] == fonte["fonte_sha256"] and len(idx["regras"]) == len(fonte["regras"])
     for r in fonte["regras"]:
         i = idx["regras"][r["codigo"]]
