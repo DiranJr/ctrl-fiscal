@@ -346,7 +346,7 @@ produção com valores fictícios.
   declarado** (R$ 1,00, série exclusiva de teste), a Sefin de testes **autorizou** a NFS-e emitida por "Emitir agora",
   a nota foi consultada (valores, IBS/CBS calculado pela Sefin, XML e DANFSe) e **cancelada** (evento 101101
   consultado). Os defeitos encontrados — assinatura (E0714, canonicalização) e relógio (E0008) — foram corrigidos.
-  Evidência sem dados sensíveis: `docs/evidencias/producao-restrita-validacao-20261009.json`. O cenário de teste não
+  A evidência fica fora do repositório (`docs/evidencias/` é local). O cenário de teste não
   é a classificação fiscal das operações reais: cada operação real continua exigindo revisão e aprovação próprias.
 - **Cancelamento em produção:** habilitado pelo titular (`NFSE_PRODUCTION_CANCELLATION_ENABLED=true` na VPS), com
   confirmação individual de cada pedido por usuário com a permissão `cancel`; **não homologado** oficialmente e com
