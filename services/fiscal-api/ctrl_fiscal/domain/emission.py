@@ -423,6 +423,8 @@ def _create_issued_document(s: Session, item: BatchItem, result: dict, simulated
     ret_sum = snap.get("retention_summary") or retencoes.resumo(
         snap.get("amount"), snap.get("unconditional_discount"), snap.get("conditional_discount"),
         snap.get("deductions"), tax)
+    por_referencia = not simulated and ret_sum["iss"].get("rate_source") == "REFERENCE"
+    confiavel = ret_sum["complete"] and not por_referencia
     doc = Document(
         company_id=item.company_id, environment=item.environment, direction="ISSUED", company_role="PRESTADOR",
         access_key=key, number=result.get("number"), dps_id=item.dps_id, status="AUTHORIZED",
@@ -437,9 +439,11 @@ def _create_issued_document(s: Session, item: BatchItem, result: dict, simulated
         amount=_dec(snap.get("amount")), deductions=_dec(snap.get("deductions")),
         ret_irrf=_dec(tax.get("irrf_withheld")), ret_inss=_dec(tax.get("inss_withheld")),
         ret_csll=_dec(tax.get("csll_withheld")),
-        ret_iss=_dec(ret_sum["iss"]["amount"]),
-        total_retained=_dec(ret_sum["total_withheld"]) if ret_sum["complete"] else None,
-        net_amount=_dec(ret_sum["net_amount"]) if ret_sum["complete"] else None,
+        ret_iss=None if por_referencia else _dec(ret_sum["iss"]["amount"]),
+        # Sem o XML oficial, a estimativa só vira total do documento quando usa a alíquota da própria DPS (pAliq) ou é
+        # simulação: a alíquota de REFERÊNCIA não é a aplicada pela Sefin (determinada pelo município).
+        total_retained=_dec(ret_sum["total_withheld"]) if confiavel else None,
+        net_amount=_dec(ret_sum["net_amount"]) if confiavel else None,
         retention_indicators={"iss": {"status": tax.get("iss_retention") or "NOT_INFORMED", "source": "rascunho"},
                               "pis_cofins_retention_code": tax.get("pis_cofins_retention")},
         tax_settings=tax, review_status=None, version=1, xml_blob_id=None, source="EMISSION",

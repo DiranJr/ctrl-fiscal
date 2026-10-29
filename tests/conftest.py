@@ -144,7 +144,7 @@ class Stack:
             internal_clients={
                 "fiscal-api": (KEYS["fiscal_api_core"], {"authz", "customers:read", "companies:read",
                                                           "service_profiles:read", "service_profiles:prepare",
-                                                          "provider:complete"}),
+                                                          "provider:complete", "parametrizacao:read"}),
                 "fiscal-worker": (KEYS["worker_core"], {"companies:read", "customers:read", "authz:job", "service_profiles:read"}),
             },
             nfse_api_url="http://nfse", nfse_api_key=KEYS["core_nfse"],

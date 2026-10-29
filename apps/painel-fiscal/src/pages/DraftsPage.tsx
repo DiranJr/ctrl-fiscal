@@ -39,6 +39,7 @@ import {
   CalculateSummaryParams,
 } from '@ctrl-fiscal/api-client';
 import { TributosRetencoesForm, TributosRetencoesState } from '../components/TributosRetencoesForm.js';
+import { detalhesAliquotaIss } from '../components/aliquotaIss.js';
 import { CanonicalRetentionSummaryCard } from '../components/CanonicalRetentionSummaryCard.js';
 import { useCanonicalRetentions } from '../components/useCanonicalRetentions.js';
 
@@ -51,7 +52,7 @@ const ROTULO_DO_CAMPO: [string, string][] = [
   ['deductions', 'Deduções'], ['unconditional_discount', 'Desconto Incondicionado'],
   ['conditional_discount', 'Desconto Condicionado'], ['customer_id', 'Tomador do Serviço'],
   ['tax_settings.issqn_taxation', 'tribISSQN'], ['tax_settings.iss_retention', 'tpRetISSQN'],
-  ['tax_settings.iss_rate', 'Alíquota do ISS'], ['tax_settings.immunity_type', 'tpImunidade'],
+  ['tax_settings.iss_rate', 'pAliq enviado na DPS'], ['tax_settings.iss_reference_rate', 'Alíquota de referência do ISS'], ['tax_settings.immunity_type', 'tpImunidade'],
   ['tax_settings.irrf_withheld', 'vRetIRRF'], ['tax_settings.inss_withheld', 'vRetCP'],
   ['tax_settings.csll_withheld', 'vRetCSLL'], ['tax_settings.pis_cofins_retention', 'tpRetPisCofins'],
   ['tax_settings.pis_cofins_cst', 'PIS/COFINS (CST)'], ['tax_settings.pis_cofins_base', 'Base de Cálculo'],
@@ -163,6 +164,7 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
     issqnTaxation: 'TAXABLE',
     issRetention: 'NOT_RETAINED',
     issRate: '',
+    issReferenceRate: '',
     immunityType: '1',
     irrfWithheld: '',
     inssWithheld: '',
@@ -194,6 +196,7 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
         issqn_taxation: editTributosState.issqnTaxation,
         iss_retention: editTributosState.issRetention,
         iss_rate: editTributosState.issRate.trim() || null,
+        iss_reference_rate: editTributosState.issReferenceRate.trim() || null,
         immunity_type: editTributosState.issqnTaxation === 'IMMUNE' ? editTributosState.immunityType : null,
         irrf_withheld: editTributosState.irrfWithheld.trim() ? parseCurrencyPtBrToDecimal(editTributosState.irrfWithheld) : null,
         inss_withheld: editTributosState.inssWithheld.trim() ? parseCurrencyPtBrToDecimal(editTributosState.inssWithheld) : null,
@@ -383,6 +386,7 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
       immunityType: (ts?.immunity_type as any) || '1',
       issRetention: (ts?.iss_retention as any) || 'NOT_RETAINED',
       issRate: ts?.iss_rate || '',
+      issReferenceRate: ts?.iss_reference_rate || '',
       pisCofinsRetention: ts?.pis_cofins_retention !== null && ts?.pis_cofins_retention !== undefined ? String(ts.pis_cofins_retention) : '',
       irrfWithheld: ts?.irrf_withheld ? formatCurrencyPtBr(ts.irrf_withheld, false) : '',
       inssWithheld: ts?.inss_withheld ? formatCurrencyPtBr(ts.inss_withheld, false) : '',
@@ -706,6 +710,7 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
         immunity_type: editTributosState.issqnTaxation === 'IMMUNE' ? editTributosState.immunityType : null,
         iss_retention: editTributosState.issRetention,
         iss_rate: editTributosState.issRate.trim() ? editTributosState.issRate.trim() : null,
+        iss_reference_rate: editTributosState.issReferenceRate.trim() ? editTributosState.issReferenceRate.trim() : null,
         pis_cofins_retention: editTributosState.pisCofinsRetention !== '' ? (String(editTributosState.pisCofinsRetention) as any) : null, // tpRetPisCofins é CÓDIGO ('0'..'9'), não número
         irrf_withheld: editTributosState.irrfWithheld.trim() ? parseCurrencyPtBrToDecimal(editTributosState.irrfWithheld) : null,
         inss_withheld: editTributosState.inssWithheld.trim() ? parseCurrencyPtBrToDecimal(editTributosState.inssWithheld) : null,
@@ -1505,6 +1510,7 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
                   onChange={handleEditTributoChange}
                   errors={editFieldErrorLists}
                   isCardWrapper={false}
+                  aliquotaIss={detalhesAliquotaIss(editingDraft?.issues)}
                 />
 
                 <CanonicalRetentionSummaryCard
@@ -1813,7 +1819,8 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
                       conditionalDiscount={d.conditional_discount}
                       deductions={d.deductions}
                       taxSettings={d.tax_settings}
-                      retention={d.retention_summary ? { total_withheld: d.retention_summary.total_withheld, net_amount: d.retention_summary.net_amount } : null}
+                      retention={d.retention_summary || null}
+                      aliquotaIss={detalhesAliquotaIss(d.issues)}
                     />
                   </div>
                 </details>

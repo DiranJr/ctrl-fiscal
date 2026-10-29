@@ -17,6 +17,7 @@ import { NotaSelecionada, resumo, rotuloNota, selecaoNotas, useSelecaoNotas } fr
 import type { ViewerMode } from './DocumentViewer.js';
 import { saveBlob } from './saveBlob.js';
 import { IbsCbsOficialSection } from './IbsCbsOficialSection.js';
+import { IssReconciliacaoSection } from './IssReconciliacaoSection.js';
 
 const DocumentViewer = lazy(() => import('./DocumentViewer.js'));
 import { CancellationPanel } from './CancellationPanel.js';
@@ -491,6 +492,7 @@ const DocumentDetail: React.FC<{
           </dl>
         </section>
       )}
+      {doc.iss_reconciliation && <IssReconciliacaoSection rec={doc.iss_reconciliation} />}
       {doc.ibs_cbs_official && <IbsCbsOficialSection of={doc.ibs_cbs_official} />}
       {doc.description && (
         <section aria-label="Descrição do serviço">

@@ -9,6 +9,8 @@ Contratos CONFIRMADOS em 07/10/2026 pelas especificações oficiais obtidas com 
 - GET /contribuintes/DFe/{NSU}?lote=true&cnpjConsulta= → LoteDistribuicaoNSUResponse; fim = HTTP 404 +
   NENHUM_DOCUMENTO_LOCALIZADO (E2220); ArquivoXml = base64 de GZip (verificado); lotes de até 50.
 - GET /parametrizacao/{municipio}/convenio.
+- GET /parametrizacao/{municipio}/{codigoServico}/{competencia}/aliquota (codigoServico 99.99.99.999, competência
+  AAAA-MM-01T00:00:00 — formato confirmado em leitura oficial de 07/10/2026).
 Bloqueios mantidos: produção NÃO emite nem consulta DPS nesta etapa (somente distribuição ADN em leitura,
 com flag explícita).
 """
@@ -30,6 +32,7 @@ from defusedxml import ElementTree as SafeET
 from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
+from ctrl_common import aliquota_iss
 from ctrl_common.clock import Clock
 
 from .. import dps as dps_mod
@@ -268,30 +271,37 @@ class OfficialProvider:
             r = self._transport(company, "param").request("GET", f"/{municipio}/convenio", idempotent=True)
         except TransportError as exc:
             raise TransmissionNotSent(f"PARAMETRIZACAO_{exc.code}")
-        body = self._json(r.body)
-        if r.status == 200 and (body.get("parametrosConvenio") or {}).get("aderenteAmbienteNacional") == 1:
-            return True
-        if r.status in (200, 404):
-            return False
-        raise TransmissionNotSent(f"PARAMETRIZACAO_HTTP_{r.status}")
+        ativo = aliquota_iss.convenio_ativo(r.status, self._json(r.body))
+        if ativo is None:
+            raise TransmissionNotSent(f"PARAMETRIZACAO_HTTP_{r.status}")
+        return ativo
 
     def _paliq_conforme_convenio(self, company: CompanyContext, payload: dict) -> list[dict]:
-        """Anexo I, RN DPS 506/507: para não optante (opSimpNac=1), pAliq é PROIBIDO com convênio do município de
-        incidência ativo (E0617) e OBRIGATÓRIO com convênio inativo e regEspTrib=0 (E0619). Depende do ambiente."""
+        """Anexo I, RN DPS 506–513 (ctrl_common.aliquota_iss): pAliq PROIBIDO ou OBRIGATÓRIO conforme o regime do
+        prestador e o convênio do município de incidência NESTE ambiente (ex.: E0617 — não optante com convênio
+        ativo; E0619 — convênio inativo). A alíquota de referência (iss_reference_rate) nunca vai na DPS."""
         perfil = (payload.get("company") or {}).get("fiscal_profile") or {}
-        if perfil.get("simples_option") != "1":
-            return []
+        tax = payload.get("tax_settings") or {}
+        if not aliquota_iss.situacao_paliq(perfil, tax, None)["possible_rules"]:
+            return []  # não depende do convênio (E0600/E0602/E0604 já bloqueiam o agendamento na fiscal-api)
         mun = incidencia.municipio_incidencia(payload)
         if not mun:
             return []
-        rate = (payload.get("tax_settings") or {}).get("iss_rate")
         ativo = self._convenio_ativo(company, mun)
-        if ativo and rate not in (None, ""):
-            return [{"code": "LOCAL_E0617", "message": f"Convênio do município de incidência {mun} ATIVO neste ambiente: "
-                                                       "não informe alíquota (pAliq)."}]
-        if not ativo and rate in (None, "") and perfil.get("special_regime") == "0":
-            return [{"code": "LOCAL_E0619", "message": f"Convênio do município de incidência {mun} NÃO ativo neste "
-                                                       "ambiente: alíquota (pAliq) obrigatória."}]
+        st = aliquota_iss.situacao_paliq(perfil, tax, ativo)
+        rate = tax.get("iss_rate")
+        situacao = "ATIVO" if ativo else "NÃO ativo"
+        if st["status"] == aliquota_iss.PROHIBITED and aliquota_iss.informado(rate):
+            return [{"code": f"LOCAL_{st['rule']}",
+                     "message": f"Convênio do município de incidência {mun} {situacao} neste ambiente (Parametrização): "
+                                f"a DPS não pode levar pAliq ({rate}%). Nada foi transmitido. A alíquota aplicada será a "
+                                "determinada pelo município; para conferir ISS e líquido use a alíquota de referência "
+                                "(não vai na DPS)."}]
+        if st["status"] == aliquota_iss.REQUIRED and not aliquota_iss.informado(rate):
+            return [{"code": f"LOCAL_{st['rule']}",
+                     "message": f"Convênio do município de incidência {mun} {situacao} neste ambiente (Parametrização): "
+                                "a DPS precisa levar pAliq. Nada foi transmitido. Informe o pAliq (a alíquota de "
+                                "referência não é enviada)."}]
         return []
 
     def submit_dps(self, company: CompanyContext, dps: dict, payload: dict) -> SubmitOutcome:
@@ -447,6 +457,16 @@ class OfficialProvider:
         self.check_ready(company, "parametros")
         try:
             r = self._transport(company, "param").request("GET", f"/{municipio}/convenio", idempotent=True)
+        except TransportError as exc:
+            raise TransmissionNotSent(exc.code)
+        return {"http_status": r.status, "body": self._json(r.body)}
+
+    def municipal_aliquota(self, company: CompanyContext, municipio: str, servico: str, competencia: str) -> dict:
+        """Alíquota do ISSQN parametrizada pelo município para o serviço (99.99.99.999) na competência (AAAA-MM)."""
+        self.check_ready(company, "parametros")
+        try:
+            r = self._transport(company, "param").request(
+                "GET", f"/{municipio}/{servico}/{competencia}-01T00:00:00/aliquota", idempotent=True)
         except TransportError as exc:
             raise TransmissionNotSent(exc.code)
         return {"http_status": r.status, "body": self._json(r.body)}

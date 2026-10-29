@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from ..clients import CompanyInfo, CoreClient
 from ..models import Batch, BatchItem, Draft
 from .common import DomainError, audit, canonical_hash, money
-from .drafts import customer_snapshot, draft_out, validate_draft
+from .drafts import consultar_parametrizacao_iss, customer_snapshot, draft_out, validate_draft
 
 QUEUE_STATUSES = ("SCHEDULED", "PROCESSING", "AWAITING_CONFIRMATION", "AUTHORIZED", "REJECTED", "WITHDRAWN")
 TERMINAL = ("AUTHORIZED", "REJECTED", "WITHDRAWN")
@@ -99,7 +99,8 @@ def create_batch(
         customer = core.customer(company.id, d.customer_id)
         profile = core.service_profile(company.id, d.service_profile_id) if d.service_profile_id else None
         issues = validate_draft(d, company, customer, now, profile,
-                                production_emission_enabled=production_emission_enabled, emissao=emissao, modo=mode)
+                                production_emission_enabled=production_emission_enabled, emissao=emissao, modo=mode,
+                                parametrizacao=consultar_parametrizacao_iss(core, company, d, customer))
         d.issues = issues
         bad = [i for i in issues if i["severity"] == "error"]
         if bad:

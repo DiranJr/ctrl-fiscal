@@ -21,8 +21,13 @@ Fórmulas (XSD TCValoresNFSe e Anexo I):
   vTotalRet = vRetCP + vRetIRRF + vRetCSLL + vISSQN (só se retido)
   vLiq      = vServ − vDescIncond − vDescCond − vTotalRet
 
-Sem pAliq na DPS, a Sefin aplica a alíquota parametrizada do município: o ISSQN retido fica "DETERMINED_BY_SEFIN",
-o total e o líquido saem PARCIAIS (complete=false) e não são inventados aqui.
+Alíquota usada na ESTIMATIVA (nunca convertida de um campo para o outro — ctrl_common.aliquota_iss):
+- pAliq (iss_rate), quando vai na DPS: é a alíquota que a Sefin aplica (amount_source ESTIMATED_FROM_RATE);
+- senão, a alíquota de REFERÊNCIA interna (iss_reference_rate), que não vai na DPS (ESTIMATED_FROM_REFERENCE): a
+  Sefin aplicará a alíquota determinada pelo município, e o valor oficial pode divergir;
+- sem nenhuma das duas, o ISSQN retido fica "DETERMINED_BY_SEFIN": total e líquido saem PARCIAIS (complete=false),
+  sem o ISS — ausência de alíquota nunca é tratada como ISS zero.
+Todo o resumo é ESTIMATIVA (basis=ESTIMATE); os valores oficiais vêm da NFS-e autorizada (reconciliacao_iss).
 Todos os valores são Decimal com 2 casas e saem como string — sem float em nenhum ponto.
 """
 from __future__ import annotations
@@ -71,6 +76,15 @@ def iss_amount(base: Decimal, rate: Decimal) -> Decimal:
     return (base * rate / Decimal(100)).quantize(CENT, rounding=ROUND_HALF_EVEN)
 
 
+def _rate(v: Any) -> Decimal | None:
+    if v in (None, ""):
+        return None
+    try:
+        return Decimal(str(v))
+    except InvalidOperation:
+        return None
+
+
 def resumo(amount: Any, unconditional_discount: Any, conditional_discount: Any, deductions: Any,
            tax: dict | None) -> dict:
     tax = tax or {}
@@ -80,19 +94,17 @@ def resumo(amount: Any, unconditional_discount: Any, conditional_discount: Any, 
     v_dr = dec(deductions) or ZERO
     ret_iss = tax.get("iss_retention")
     iss_retained = ret_iss in ISS_RETAINED
-    rate = None
-    if tax.get("iss_rate") not in (None, ""):
-        try:
-            rate = Decimal(str(tax["iss_rate"]))
-        except InvalidOperation:
-            rate = None
+    paliq, ref = _rate(tax.get("iss_rate")), _rate(tax.get("iss_reference_rate"))
+    rate, rate_src = (paliq, "DPS_PALIQ") if paliq is not None else (ref, "REFERENCE") if ref is not None else (None, None)
     base = v_serv - d_inc - v_dr
+    estimated = None if rate is None else iss_amount(base, rate)
     if not iss_retained:
         iss_val, iss_src = None, "NOT_RETAINED"
     elif rate is None:
         iss_val, iss_src = None, "DETERMINED_BY_SEFIN"
     else:
-        iss_val, iss_src = iss_amount(base, rate), "ESTIMATED_FROM_RATE"
+        iss_val = estimated
+        iss_src = "ESTIMATED_FROM_RATE" if rate_src == "DPS_PALIQ" else "ESTIMATED_FROM_REFERENCE"
 
     inss, irrf, contrib = dec(tax.get("inss_withheld")), dec(tax.get("irrf_withheld")), dec(tax.get("csll_withheld"))
     tp = tax.get("pis_cofins_retention")
@@ -116,6 +128,10 @@ def resumo(amount: Any, unconditional_discount: Any, conditional_discount: Any, 
             "retained": iss_retained,
             "base": _s(base),
             "rate": None if rate is None else str(rate),
+            "rate_source": rate_src,
+            "dps_rate": None if paliq is None else str(paliq),
+            "reference_rate": None if ref is None else str(ref),
+            "estimated_amount": _s(estimated),
             "amount": _s(iss_val),
             "amount_source": iss_src,
         },
@@ -139,6 +155,7 @@ def resumo(amount: Any, unconditional_discount: Any, conditional_discount: Any, 
         "net_amount": _s(net),
         "complete": not pending,
         "pending": pending,
+        "basis": "ESTIMATE",
     }
 
 
@@ -156,9 +173,10 @@ def issues(summary: dict) -> list[tuple[str, str, str, str, str | None]]:
                     "retidas no DANFSe. Ainda não está confirmado se a Sefin os inclui no total retido (vTotalRet) e "
                     "no líquido; esta prévia não os soma e o valor oficial virá da NFS-e autorizada.", "warning", "NT008"))
     if "iss.amount" in summary["pending"]:
-        out.append(("tax_settings.iss_rate", "ISS_RETAINED_AMOUNT_BY_SEFIN",
-                    "ISS retido sem alíquota informada: a Sefin aplicará a alíquota parametrizada do município; "
-                    "total retido e líquido exibidos sem o ISS.", "info", None))
+        out.append(("tax_settings.iss_reference_rate", "ISS_RETAINED_AMOUNT_BY_SEFIN",
+                    "ISS retido sem pAliq e sem alíquota de referência: a Sefin aplicará a alíquota determinada pelo "
+                    "município. Total retido e líquido estimados aparecem SEM o ISS (não é ISS zero); informe a "
+                    "alíquota de referência para estimá-los.", "info", None))
     fed = summary["federal"]
     cov = fed["contributions_covered"]
     if cov is not None and not any(cov.values()) and fed["contributions"] is not None:

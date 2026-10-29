@@ -127,3 +127,30 @@ def customer(company_id: str, customer_id: str, request: Request, s: Session = D
     if c is None:
         raise ProblemError(404, "CUSTOMER_NOT_FOUND", "Cliente não encontrado.")
     return customer_out(c).model_dump(mode="json")
+
+
+@router.get("/companies/{company_id}/parametrizacao-iss")
+def parametrizacao_iss(
+    company_id: str, request: Request,
+    municipio: str = Query(..., pattern=r"^[0-9]{7}$"),
+    servico: str | None = Query(None, pattern=r"^[0-9]{2}\.[0-9]{2}\.[0-9]{2}\.[0-9]{3}$"),
+    competencia: str | None = Query(None, pattern=r"^[0-9]{4}-(0[1-9]|1[0-2])$"),
+    s: Session = Depends(db_session),
+) -> dict:
+    """Convênio do município de incidência e alíquota parametrizada no ambiente do workspace (leitura oficial)."""
+    from .parametrizacao_iss import consultar
+    from .seed import DEMO_CNPJS
+
+    c = ctx(request)
+    c.service_auth.authenticate(request, "parametrizacao:read")
+    company = s.get(Company, company_id)
+    if company is None:
+        raise ProblemError(404, "COMPANY_NOT_FOUND", "Empresa não encontrada.")
+    now = c.clock.now()
+    if company.nfse_environment not in ("restricted", "production") or company.cnpj in DEMO_CNPJS:
+        return {"environment": company.nfse_environment, "municipio": municipio, "consulted_at": now.isoformat(),
+                "convenio": {"status": "NOT_APPLICABLE", "detail": "SIMULACAO"},
+                "aliquota": {"status": "NOT_APPLICABLE", "rate": None, "servico": servico, "competencia": competencia}}
+    return consultar(c.nfse_http, c.settings.nfse_api_key, company_id=company.id, cnpj=company.cnpj,
+                     environment=company.nfse_environment, municipio=municipio, servico=servico,
+                     competencia=competencia, now=now)

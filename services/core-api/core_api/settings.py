@@ -80,7 +80,7 @@ class CoreSettings:
         k = secret("INTERNAL_KEY_FISCAL_API_TO_CORE", required=False)
         if k:
             clients["fiscal-api"] = (k, {"authz", "customers:read", "companies:read", "service_profiles:read",
-                                         "service_profiles:prepare", "provider:complete"})
+                                         "service_profiles:prepare", "provider:complete", "parametrizacao:read"})
         k = secret("INTERNAL_KEY_FISCAL_WORKER_TO_CORE", required=False)
         if k:
             clients["fiscal-worker"] = (k, {"companies:read", "customers:read", "authz:job", "service_profiles:read"})

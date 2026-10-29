@@ -1,16 +1,21 @@
 import React from 'react';
-import { Input, Select, Card } from '@ctrl-fiscal/ui';
+import { Input, Select, Card, Button } from '@ctrl-fiscal/ui';
 import {
   ISS_RETENTION_OPTIONS,
   TP_RET_PIS_COFINS_OPTIONS,
   PIS_COFINS_CST_OPTIONS,
+  IssAliquotaDetails,
 } from '@ctrl-fiscal/api-client';
+import { textoSituacaoPaliq } from './aliquotaIss.js';
 
 export interface TributosRetencoesState {
   // ISS
   issqnTaxation: 'TAXABLE' | 'IMMUNE' | 'EXPORT' | 'NOT_INCIDENT';
   issRetention: 'NOT_RETAINED' | 'RETAINED_BY_TOMADOR' | 'RETAINED_BY_INTERMEDIARY';
+  /** pAliq ENVIADO na DPS. */
   issRate: string;
+  /** Alíquota de REFERÊNCIA (cálculo interno; nunca vai na DPS). */
+  issReferenceRate: string;
   immunityType: '1' | '2' | '3' | '4' | '5';
   // Retenções Federais
   irrfWithheld: string;
@@ -31,6 +36,8 @@ interface TributosRetencoesFormProps {
   onChange: <K extends keyof TributosRetencoesState>(field: K, value: TributosRetencoesState[K]) => void;
   errors?: Record<string, string[]>;
   isCardWrapper?: boolean;
+  /** Resultado da Parametrização na última validação (convênio, regra do pAliq, alíquota parametrizada). */
+  aliquotaIss?: IssAliquotaDetails | null;
 }
 
 export const TributosRetencoesForm: React.FC<TributosRetencoesFormProps> = ({
@@ -38,7 +45,17 @@ export const TributosRetencoesForm: React.FC<TributosRetencoesFormProps> = ({
   onChange,
   errors = {},
   isCardWrapper = true,
+  aliquotaIss = null,
 }) => {
+  const paliq = values.issRate.trim();
+  const referencia = values.issReferenceRate.trim();
+  // Ações EXPLÍCITAS: o usuário escolhe mover/enviar; nada é convertido sem clique.
+  const moverParaReferencia = () => {
+    onChange('issReferenceRate', paliq);
+    onChange('issRate', '');
+  };
+  const enviarReferencia = () => onChange('issRate', referencia);
+  const situacao = textoSituacaoPaliq(aliquotaIss);
   const content = (
     <div className="pf-form pf-form-stack">
       {/* 1. ISSQN & Responsabilidade de Retenção */}
@@ -72,15 +89,45 @@ export const TributosRetencoesForm: React.FC<TributosRetencoesFormProps> = ({
             }
           />
 
-          <Input
-            label="Alíquota do ISS (%)"
-            value={values.issRate}
-            onChange={(e) => onChange('issRate', e.target.value)}
-            className="pf-money"
-            placeholder="ex: 2.00 ou 5.00"
-            helperText="Opcional. Se não informada, a Sefin aplicará a alíquota parametrizada do município."
-            error={errors['tax_settings.iss_rate']?.join(', ')}
-          />
+          <div data-field="tax_settings.iss_reference_rate" style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem', alignItems: 'flex-start' }}>
+            <Input
+              label="Alíquota de referência do ISS (%) — cálculo interno"
+              value={values.issReferenceRate}
+              onChange={(e) => onChange('issReferenceRate', e.target.value)}
+              className="pf-money"
+              placeholder="ex: 5.00"
+              helperText="Usada só para estimar ISS, retenção e líquido. Não vai na DPS."
+              error={errors['tax_settings.iss_reference_rate']?.join(', ')}
+            />
+            {referencia && !paliq && aliquotaIss?.paliq_status !== 'PROHIBITED' && (
+              <Button size="sm" variant="outline" onClick={enviarReferencia}
+                title="Copia a alíquota de referência para o pAliq enviado na DPS">
+                Enviar a referência como pAliq
+              </Button>
+            )}
+          </div>
+
+          <div data-field="tax_settings.iss_rate" style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem', alignItems: 'flex-start' }}>
+            <Input
+              label="pAliq enviado na DPS (%)"
+              value={values.issRate}
+              onChange={(e) => onChange('issRate', e.target.value)}
+              className="pf-money"
+              placeholder="em branco = não enviar"
+              helperText="Proibido com convênio do município de incidência ativo (E0617): a alíquota é determinada pelo município. Obrigatório com convênio inativo (E0619)."
+              error={errors['tax_settings.iss_rate']?.join(', ')}
+            />
+            {paliq && (
+              <Button size="sm" variant="outline" onClick={moverParaReferencia}
+                title="Passa o valor para a alíquota de referência e deixa o pAliq em branco">
+                Mover para a referência (não enviar)
+              </Button>
+            )}
+          </div>
+
+          {situacao && (
+            <p className="pf-help pf-span-all" role="note">{situacao}</p>
+          )}
 
           {values.issqnTaxation === 'IMMUNE' && (
             <Select

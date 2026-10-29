@@ -146,7 +146,12 @@ class TaxSettings(Strict):
     iss_retention: Literal["NOT_RETAINED", "RETAINED_BY_TOMADOR", "RETAINED_BY_INTERMEDIARY"] | None = Field(
         None, description="tpRetISSQN: 1 não retido, 2 retido pelo tomador, 3 retido pelo intermediário.")
     iss_rate: str | None = Field(None, pattern=r"^(0|[0-9](\.[0-9]{2})?)$",
-                                 description="pAliq (TSDec1V2), informado pelo usuário; não é calculado.")
+                                 description="pAliq ENVIADO na DPS (TSDec1V2), informado pelo usuário; não é calculado. "
+                                             "Proibido ou obrigatório conforme o convênio do município de incidência "
+                                             "(Anexo I, E0617/E0619).")
+    iss_reference_rate: str | None = Field(None, pattern=r"^(0|[0-9](\.[0-9]{2})?)$", description=(
+        "Alíquota de REFERÊNCIA do ISSQN (%), só para estimar ISS, retenção e líquido. NUNCA vai na DPS; usada na "
+        "estimativa quando o pAliq não é enviado (ex.: convênio ativo, em que a alíquota é determinada pelo município)."))
     pis_cofins_retention: Literal["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"] | None = Field(
         None, description="tpRetPisCofins — QUAIS contribuições foram retidas (0 nenhuma; 1 PIS/COFINS; 2 PIS/COFINS não "
                           "retidos; 3 PIS/COFINS/CSLL; 4 PIS/COFINS sem CSLL; 5 só PIS; 6 só COFINS; 7 COFINS+CSLL; "
@@ -179,6 +184,7 @@ class TaxSettingsOut(BaseModel):
     issqn_taxation: str | None = None
     iss_retention: str | None = None
     iss_rate: str | None = None
+    iss_reference_rate: str | None = None
     pis_cofins_retention: str | None = None
     irrf_withheld: str | None = None
     inss_withheld: str | None = None
@@ -385,7 +391,9 @@ class Issue(BaseModel):
                                                         "validação local (sem código oficial).")
     official_message: str | None = Field(None, description="Mensagem oficial da Sefin para a regra, quando houver.")
     xml_path: str | None = Field(None, description="Elemento da DPS envolvido (DPS/infDPS/...).")
-    action: str | None = Field(None, description="Onde corrigir.")
+    action: str | None = Field(None, description="Orientação: como corrigir (bloqueio) ou o que conferir (aviso).")
+    details: dict | None = Field(None, description="Dados estruturados da pendência (ex.: alíquota do ISS: situação do "
+                                                   "pAliq, convênio consultado, alíquota parametrizada e referência).")
     target: dict | None = Field(None, description="Destino da correção: draft_field (field), customer (customer_id), "
                                                   "service_profile (profile_id), company ou certificate.")
 
@@ -414,9 +422,14 @@ class RetentionIss(BaseModel):
     retention: str | None = Field(description="tpRetISSQN informado (iss_retention).")
     retained: bool
     base: str = Field(description="vBC = vServ − desconto incondicionado − deduções.")
-    rate: str | None = Field(description="pAliq informado; null = a Sefin aplica a alíquota parametrizada.")
-    amount: str | None = Field(description="ISSQN retido; null quando não retido ou quando definido pela Sefin.")
-    amount_source: Literal["NOT_RETAINED", "ESTIMATED_FROM_RATE", "DETERMINED_BY_SEFIN"]
+    rate: str | None = Field(description="Alíquota usada na ESTIMATIVA: o pAliq enviado ou, sem ele, a referência; "
+                                         "null = nenhuma informada (a Sefin aplica a do município).")
+    rate_source: Literal["DPS_PALIQ", "REFERENCE"] | None = Field(None, description="Origem de `rate`.")
+    dps_rate: str | None = Field(None, description="pAliq enviado na DPS (null = não enviado).")
+    reference_rate: str | None = Field(None, description="Alíquota de referência interna (não vai na DPS).")
+    estimated_amount: str | None = Field(None, description="vISSQN estimado = vBC × rate (retido ou não).")
+    amount: str | None = Field(description="ISSQN retido estimado; null quando não retido ou sem alíquota.")
+    amount_source: Literal["NOT_RETAINED", "ESTIMATED_FROM_RATE", "ESTIMATED_FROM_REFERENCE", "DETERMINED_BY_SEFIN"]
 
 
 class RetentionCovered(BaseModel):
@@ -457,6 +470,7 @@ class RetentionSummary(BaseModel):
     net_amount: str = Field(description="vLiq = vServ − desc. incondicionado − desc. condicionado − total retido.")
     complete: bool = Field(description="false quando o ISSQN retido depende da alíquota da Sefin (pending).")
     pending: list[str]
+    basis: Literal["ESTIMATE"] = Field("ESTIMATE", description="Prévia: os valores oficiais vêm da NFS-e autorizada.")
 
 
 class RetentionPreviewIn(Strict):
@@ -661,6 +675,9 @@ class DocumentDetail(DocumentOut):
     events: list[EventOut]
     ibs_cbs_official: IbsCbsOficial | None = Field(
         None, description="IBS/CBS calculados e autorizados pela Sefin para esta NFS-e (não é a prévia local).")
+    iss_reconciliation: dict | None = Field(
+        None, description="NFS-e emitida pela plataforma: estimativa do agendamento (alíquota usada, ISS, retenção, "
+                          "líquido) × valores oficiais da Sefin (pAliqAplic, vISSQN, vTotalRet, vLiq).")
 
 
 class DocumentPage(BaseModel):

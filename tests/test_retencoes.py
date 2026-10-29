@@ -31,7 +31,8 @@ def test_resumo_multiplas_retencoes_sem_pis_cofins_informado():
 
     r = resumo("10000.00", "100.00", "50.00", "0.00", MULTI)
     assert r["iss"] == {"retention": "RETAINED_BY_TOMADOR", "retained": True, "base": "9900.00", "rate": "2.50",
-                        "amount": "247.50", "amount_source": "ESTIMATED_FROM_RATE"}
+                        "rate_source": "DPS_PALIQ", "dps_rate": "2.50", "reference_rate": None,
+                        "estimated_amount": "247.50", "amount": "247.50", "amount_source": "ESTIMATED_FROM_RATE"}
     assert r["federal"]["total"] == "1710.35" and r["federal"]["contributions_covered"] == {"pis": True, "cofins": True, "csll": True}
     assert r["informed_not_withheld"] == {"pis": "64.35", "cofins": "297.00"}
     assert r["total_withheld"] == "1957.85"  # 1100 + 150 + 460,35 + 247,50 — sem somar vPis/vCofins de novo

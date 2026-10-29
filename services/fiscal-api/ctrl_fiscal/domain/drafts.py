@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ctrl_common import aliquota_iss
 from ctrl_common.fiscal_types import is_valid_cnpj, is_valid_cpf
 
 from ..clients import CompanyInfo, CoreClient
@@ -24,7 +25,7 @@ from .regras_dps import datas_issues, dominio_issues, negocio_issues
 
 EDITABLE_STATUSES = ("DRAFT", "REJECTED")
 TAX_KEYS = (
-    "issqn_taxation", "iss_retention", "iss_rate", "pis_cofins_retention",
+    "issqn_taxation", "iss_retention", "iss_rate", "iss_reference_rate", "pis_cofins_retention",
     "irrf_withheld", "inss_withheld", "csll_withheld", "pis_cofins_cst", "approx_tax", "ibs_cbs",
     "pis_cofins_base", "pis_rate", "cofins_rate", "pis_amount", "cofins_amount", "immunity_type",
 )
@@ -573,10 +574,12 @@ def operacao_issues(d: Draft) -> list[dict]:
 
 def validate_draft(d: Draft, company: CompanyInfo, customer: dict | None, now: datetime,
                    profile: dict | None = None, *, production_emission_enabled: bool = False,
-                   emissao: datetime | None = None, modo: str | None = None) -> list[dict]:
+                   emissao: datetime | None = None, modo: str | None = None,
+                   parametrizacao: dict | None = None) -> list[dict]:
     """Validações locais e de formato do leiaute verificado. Não autoriza nem transmite.
     `emissao`: instante em que a DPS será emitida (emitir agora = agora; agendar = data programada). Sem ele (salvar ou
-    validar o rascunho), a prestação futura é só aviso; com ele, vale a regra E0015 contra essa data."""
+    validar o rascunho), a prestação futura é só aviso; com ele, vale a regra E0015 contra essa data.
+    `parametrizacao`: leitura oficial do convênio/alíquota (consultar_parametrizacao_iss); None = não consultada."""
     from .referencia import pendencias_atuais
 
     issues: list[dict] = profile_issues(d, profile) + operacao_issues(d) + pendencias_atuais(d)
@@ -642,7 +645,7 @@ def validate_draft(d: Draft, company: CompanyInfo, customer: dict | None, now: d
     if company.environment == "mock":
         issues.append(_issue("environment", "SIMULATION_ONLY", "Ambiente de simulação: nenhuma NFS-e real será gerada.", "info"))
     else:
-        issues.extend(_official_issues(d, company, production_emission_enabled))
+        issues.extend(_official_issues(d, company, production_emission_enabled, parametrizacao))
         issues.extend(negocio_issues(d, company, customer, now))
     return issues
 
@@ -690,7 +693,8 @@ def withdraw_draft(s: Session, d: Draft, *, expected_version: int, user_id: str,
     return d
 
 
-def _official_issues(d: Draft, company: CompanyInfo, production_emission_enabled: bool = False) -> list[dict]:
+def _official_issues(d: Draft, company: CompanyInfo, production_emission_enabled: bool = False,
+                     parametrizacao: dict | None = None) -> list[dict]:
     """Campos obrigatórios da DPS v1.01 (sem valores presumidos)."""
     out: list[dict] = []
     if company.environment == "production" and not production_emission_enabled:
@@ -740,7 +744,7 @@ def _official_issues(d: Draft, company: CompanyInfo, production_emission_enabled
         out.append(_issue("tax_settings.pis_cofins_cst", "PIS_COFINS_CST_REQUIRED", "CST obrigatório quando informar PIS/COFINS."))
     perfil = company.fiscal_profile or {}
     out.extend(_paliq_issues(tax, perfil))
-    out.extend(_paliq_convenio_warning(tax, perfil))
+    out.extend(_iss_aliquota_issues(tax, perfil, parametrizacao, company.timezone))
     if not company.municipality_code:
         out.append(_issue("company.municipality_code", "COMPANY_MUNICIPALITY_REQUIRED", "Perfil fiscal: município do emitente."))
     if not perfil.get("simples_option"):
@@ -770,16 +774,154 @@ def _paliq_issues(tax: dict, perfil: dict) -> list[dict]:
     return out
 
 
-def _paliq_convenio_warning(tax: dict, perfil: dict) -> list[dict]:
-    """RN 506/507 dependem do convênio do município de INCIDÊNCIA no ambiente (consultado na transmissão)."""
-    if perfil.get("simples_option") != "1":
-        return []
-    informed = tax.get("iss_rate") not in (None, "")
-    return [_issue("tax_settings.iss_rate", "PALIQ_DEPENDS_ON_INCIDENCE_CONVENIO",
-                   ("Alíquota informada: será recusada (E0617) se o convênio do município de incidência estiver ativo "
-                    "neste ambiente." if informed else
-                    "Sem alíquota: será exigida (E0619) se o convênio do município de incidência não estiver ativo "
-                    "neste ambiente.") + " Conferido na transmissão pela Parametrização oficial.", "warning")]
+AMBIENTES = {"production": "Produção", "restricted": "Produção Restrita"}
+REGRAS_CONVENIO = {"E0617", "E0619", "E0621", "E0625", "E0628", "E0631", "E0635", "E0640"}
+MOTIVOS_PARAMETRIZACAO = {
+    "INCIDENCE_MUNICIPALITY_UNKNOWN": "município de incidência do ISSQN não determinado (confira cTribNac, local da "
+                                      "prestação e o município do tomador/prestador)",
+    "NOT_CHECKED": "consulta não realizada nesta validação",
+    "CORE_UNAVAILABLE": "serviço interno indisponível",
+    "INTEGRATION_UNAVAILABLE": "conector NFS-e indisponível",
+    "PARAMETRIZACAO_UNAVAILABLE": "a Parametrização oficial não respondeu",
+    "PRODUCTION_DISTRIBUTION_DISABLED": "leitura oficial de produção desligada na configuração",
+    "CERTIFICATE_NOT_CONFIGURED": "certificado A1 não instalado para este ambiente",
+}
+
+
+def consultar_parametrizacao_iss(core: CoreClient | None, company: CompanyInfo, d: Draft,
+                                 customer: dict | None) -> dict | None:
+    """Leitura oficial (via core → conector) do convênio do município de INCIDÊNCIA no ambiente e da alíquota
+    parametrizada para o serviço na competência. None em simulação. Nunca levanta erro."""
+    if company.environment not in OFFICIAL_ENVS:
+        return None
+    mun = aliquota_iss.municipio_incidencia(d.service_national_code, d.service_location_code,
+                                            (customer or {}).get("municipality_code"), company.municipality_code)
+    servico = aliquota_iss.codigo_servico_parametrizacao(d.service_national_code, d.service_municipal_code)
+    comp = d.competence if re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", d.competence or "") else None
+    if not mun or core is None:
+        return {"environment": company.environment, "municipio": mun,
+                "convenio": {"status": "UNAVAILABLE",
+                             "detail": "INCIDENCE_MUNICIPALITY_UNKNOWN" if not mun else "CORE_UNAVAILABLE"},
+                "aliquota": {"status": "NOT_REQUESTED", "rate": None, "servico": servico, "competencia": comp}}
+    return {"environment": company.environment, **core.parametrizacao_iss(company.id, mun, servico, comp)}
+
+
+def _pct(v: str | None) -> str:
+    return f"{Decimal(str(v)):.2f}".replace(".", ",") + "%"
+
+
+def _municipio(code: str | None) -> dict | None:
+    from ctrl_common import dominios  # noqa: PLC0415
+
+    return dominios.municipio(code) if code else None
+
+
+def _iss_aliquota_issues(tax: dict, perfil: dict, param: dict | None, tz: str) -> list[dict]:
+    """pAliq ENVIADO na DPS × alíquota de REFERÊNCIA interna, pela situação oficial (Anexo I, linhas 502–513).
+    Cada pendência diz o resultado da consulta e traz orientação própria (sem mandar "corrigir" o que não é erro)."""
+    param = param or {"convenio": {"status": "UNAVAILABLE", "detail": "NOT_CHECKED"}}
+    conv = param.get("convenio") or {}
+    ativo = {"ACTIVE": True, "INACTIVE": False}.get(conv.get("status"))
+    st = aliquota_iss.situacao_paliq(perfil, tax, ativo)
+    paliq, ref = tax.get("iss_rate"), tax.get("iss_reference_rate")
+    tem_paliq, tem_ref = aliquota_iss.informado(paliq), aliquota_iss.informado(ref)
+    mun = param.get("municipio")
+    info_mun = _municipio(mun)
+    nome = f"{info_mun['nome']}/{info_mun['uf']} ({mun})" if info_mun else (mun or "município não determinado")
+    amb = AMBIENTES.get(param.get("environment") or "", param.get("environment") or "")
+    quando = ""
+    if param.get("consulted_at"):
+        try:
+            quando = datetime.fromisoformat(param["consulted_at"]).astimezone(ZoneInfo(tz)).strftime("%d/%m/%Y %H:%M")
+        except ValueError:
+            quando = ""
+    aliq = param.get("aliquota") or {}
+    municipal = aliq.get("rate") if aliq.get("status") == "FOUND" else None
+    comp = aliq.get("competencia") or ""
+    comp_txt = f"{comp[5:7]}/{comp[:4]}" if len(comp) == 7 else comp
+    if municipal:
+        txt_mun = (f" Alíquota parametrizada pelo município para o serviço {aliq.get('servico')} em {comp_txt}: "
+                   f"{_pct(municipal)}.")
+    elif aliq.get("status") == "NOT_FOUND":
+        txt_mun = f" A Parametrização não devolveu alíquota para o serviço {aliq.get('servico')} em {comp_txt}."
+    elif aliq.get("status") == "UNAVAILABLE":
+        txt_mun = " A alíquota parametrizada pelo município não pôde ser consultada agora."
+    else:
+        txt_mun = ""
+    regra = st["rule"]
+    por_convenio = regra in REGRAS_CONVENIO
+    fonte = (f"convênio de {nome} {'ATIVO' if ativo else 'NÃO ativo'} em {amb} (Parametrização consultada em "
+             f"{quando}; a regra é conferida de novo na transmissão)") if por_convenio else ""
+    det = {"paliq_status": st["status"], "rule": regra, "possible_rules": st["possible_rules"],
+           "convenio": conv.get("status"), "convenio_detail": conv.get("detail"), "municipio": mun,
+           "municipio_nome": nome if mun else None, "environment": param.get("environment"),
+           "consulted_at": param.get("consulted_at"), "municipal_rate": municipal,
+           "municipal_rate_status": aliq.get("status"), "service_code": aliq.get("servico"),
+           "competence": comp or None, "dps_rate": paliq if tem_paliq else None,
+           "reference_rate": ref if tem_ref else None}
+    out: list[dict] = []
+
+    def add(field: str, code: str, sev: str, msg: str, action: str | None = None, rule: str | None = None) -> None:
+        out.append({**_issue(field, code, msg, sev), "rule": rule, "action": action, "details": det})
+
+    ref_txt = (f" A alíquota de referência {_pct(ref)} é usada só na estimativa de ISS, retenção e líquido (não vai "
+               "na DPS)." if tem_ref else
+               " Sem alíquota de referência, ISS retido e líquido estimados ficam sem o ISS até a autorização (não é "
+               "ISS zero).")
+    if st["status"] == aliquota_iss.PROHIBITED:
+        if tem_paliq and por_convenio:  # E0600/E0602/E0604 com pAliq já saem em _paliq_issues
+            add("tax_settings.iss_rate", "PALIQ_NOT_ALLOWED_BY_CONVENIO", "error",
+                f"A DPS não pode levar pAliq ({_pct(paliq)}): {fonte}. A alíquota será determinada pelo município."
+                + txt_mun,
+                "Use “Mover para a referência” no campo pAliq: o valor passa para a alíquota de referência (continua "
+                "no cálculo estimado) e o pAliq fica em branco. Nada é removido sem a sua ação.", regra)
+        elif not tem_paliq:
+            motivo = fonte if por_convenio else f"regra {regra}"
+            add("tax_settings.iss_reference_rate", "ISS_RATE_SET_BY_MUNICIPALITY", "info",
+                f"pAliq não será enviado na DPS ({motivo}). A alíquota será determinada pelo município." + txt_mun
+                + ref_txt,
+                None if tem_ref else ("Para conferir retenção e líquido, informe a alíquota de referência"
+                                      + (f" (ex.: a parametrizada, {_pct(municipal)})" if municipal else "") + "."),
+                regra)
+    elif st["status"] == aliquota_iss.REQUIRED:
+        if not tem_paliq:
+            add("tax_settings.iss_rate", "PALIQ_REQUIRED_BY_CONVENIO", "error",
+                f"A DPS precisa levar pAliq: {fonte}." + txt_mun,
+                "Informe o pAliq" + (f" (“Enviar a referência como pAliq” usa {_pct(ref)})" if tem_ref else "")
+                + ". A alíquota de referência sozinha não é enviada.", regra)
+        else:
+            add("tax_settings.iss_rate", "PALIQ_WILL_BE_SENT", "info",
+                f"pAliq {_pct(paliq)} será enviado na DPS (obrigatório: {fonte})." + txt_mun, None, regra)
+    elif st["status"] == aliquota_iss.OPTIONAL:
+        add("tax_settings.iss_rate", "PALIQ_OPTIONAL", "info",
+            (f"pAliq {_pct(paliq)} será enviado na DPS (permitido neste caso)." if tem_paliq else
+             "pAliq não será enviado: a Sefin aplicará a alíquota parametrizada do município.")
+            + txt_mun + ("" if tem_paliq else ref_txt))
+    elif st["possible_rules"]:
+        detalhe = conv.get("detail") or ""
+        motivo = MOTIVOS_PARAMETRIZACAO.get(detalhe, f"motivo: {detalhe or 'desconhecido'}")
+        proib, obrig = st["possible_rules"][0], st["possible_rules"][-1]
+        add("tax_settings.iss_rate", "PALIQ_PARAMETRIZACAO_UNAVAILABLE", "warning",
+            f"Não foi possível confirmar na Parametrização a situação do convênio de {nome} em {amb} ({motivo}). "
+            f"Por isso não se sabe se o pAliq é proibido ({proib}) ou obrigatório ({obrig}). "
+            + (f"A DPS levará pAliq {_pct(paliq)}: se o convênio estiver ativo, a transmissão será bloqueada antes "
+               "do envio." if tem_paliq else
+               "A DPS irá sem pAliq: se o convênio não estiver ativo, a transmissão será bloqueada antes do envio.")
+            + " Os valores exibidos são estimativas.",
+            "Nada precisa ser alterado agora: valide de novo quando a consulta for possível. A regra é conferida na "
+            "transmissão e nada é enviado em desacordo com ela.")
+    if tem_ref and tem_paliq and Decimal(str(ref)) != Decimal(str(paliq)):
+        add("tax_settings.iss_reference_rate", "ISS_REFERENCE_DIFFERS_FROM_PALIQ", "warning",
+            f"Alíquota de referência ({_pct(ref)}) diferente do pAliq enviado ({_pct(paliq)}): a estimativa usa o "
+            "pAliq, que é o que a Sefin aplica; a referência não é usada.",
+            "Confira qual alíquota é a correta; se o pAliq estiver certo, a referência pode ficar em branco.")
+    if tem_ref and not tem_paliq and municipal and Decimal(str(ref)) != Decimal(municipal):
+        add("tax_settings.iss_reference_rate", "ISS_REFERENCE_DIFFERS_FROM_MUNICIPAL", "warning",
+            f"Alíquota de referência ({_pct(ref)}) diferente da parametrizada pelo município ({_pct(municipal)}) para "
+            f"o serviço {aliq.get('servico')} em {comp_txt}. Sem pAliq, a Sefin aplicará a do município: ISS, "
+            "retenção e líquido oficiais podem divergir da estimativa.",
+            f"Confira a alíquota de referência; se a do município estiver correta, ajuste-a para {_pct(municipal)}.")
+    return out
 
 
 def retention_summary(d: Draft) -> dict:

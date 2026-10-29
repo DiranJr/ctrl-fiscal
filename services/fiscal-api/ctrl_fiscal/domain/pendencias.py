@@ -8,8 +8,9 @@ Cada pendência devolvida pela validação (campo, código, mensagem, severidade
   origem diz que é validação local — nada é inventado nem resumido;
 - `official_message`: a mensagem oficial da Sefin para a regra (Anexo I), quando houver;
 - `xml_path`: elemento da DPS envolvido (o do Anexo I, quando houver regra; senão o do leiaute para o campo);
-- `action` + `target`: onde corrigir — campo do rascunho, cadastro do cliente, perfil de serviço, cadastro da empresa
-  ou certificado.
+- `action` + `target`: orientação e destino — campo do rascunho, cadastro do cliente, perfil de serviço, cadastro da
+  empresa ou certificado. A orientação própria da pendência (quando a validação a traz, ex.: alíquota do ISS conforme a
+  Parametrização) prevalece; a genérica manda CORRIGIR só bloqueios — aviso pede para CONFERIR, informação não pede nada.
 """
 from __future__ import annotations
 
@@ -44,7 +45,8 @@ CAMPOS: list[tuple[str, str, str, str | None, str | None]] = [
     ("service", "Serviço", "Serviço", "serv", "draft"),
     ("tax_settings.issqn_taxation", "ISSQN", "Tributação do ISSQN (tribISSQN)", "valores/trib/tribMun/tribISSQN", "draft"),
     ("tax_settings.iss_retention", "ISSQN", "Retenção do ISSQN (tpRetISSQN)", "valores/trib/tribMun/tpRetISSQN", "draft"),
-    ("tax_settings.iss_rate", "ISSQN", "Alíquota do ISSQN (pAliq)", "valores/trib/tribMun/pAliq", "draft"),
+    ("tax_settings.iss_rate", "ISSQN", "pAliq enviado na DPS", "valores/trib/tribMun/pAliq", "draft"),
+    ("tax_settings.iss_reference_rate", "ISSQN", "Alíquota de referência do ISS (interna, não vai na DPS)", None, "draft"),
     ("tax_settings.immunity_type", "ISSQN", "Tipo de imunidade (tpImunidade)", "valores/trib/tribMun/tpImunidade", "draft"),
     ("tax_settings.pis_cofins", "Tributos federais", "PIS/COFINS", "valores/trib/tribFed/piscofins", "draft"),
     ("tax_settings.csll_withheld", "Tributos federais", "CSLL retida", "valores/trib/tribFed/vRetCSLL", "draft"),
@@ -70,6 +72,7 @@ CAMPOS: list[tuple[str, str, str, str | None, str | None]] = [
 ]
 ACOES = {
     "draft": "Corrija “{label}” no editor do rascunho e valide de novo.",
+    "draft_warning": "Confira “{label}” no editor do rascunho; se estiver correto, não é preciso alterar.",
     "customer": "Atualize o cadastro do tomador em Clientes e valide o rascunho de novo.",
     "service_profile": "Revise o perfil de serviço em Configurações → Perfis de serviço (ou na aba “Configuração da "
                        "operação” do rascunho) e valide de novo.",
@@ -121,7 +124,13 @@ def detalhar(issue: dict, draft=None) -> dict:  # noqa: ANN001
     elif destino in ("company", "certificate"):
         alvo = {"kind": destino}
     out["target"] = alvo
-    out["action"] = (ACOES[destino].format(label=rotulo) if destino and issue.get("severity") != "info" else None)
+    sev = issue.get("severity")
+    if issue.get("action"):
+        out["action"] = issue["action"]
+    elif destino == "draft" and sev == "warning":
+        out["action"] = ACOES["draft_warning"].format(label=rotulo)
+    else:
+        out["action"] = ACOES[destino].format(label=rotulo) if destino and sev != "info" else None
     return out
 
 

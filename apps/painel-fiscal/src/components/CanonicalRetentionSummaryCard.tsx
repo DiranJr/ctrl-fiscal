@@ -5,6 +5,7 @@ import {
   formatOptionalCurrency,
   formatOptionalPercent,
 } from '@ctrl-fiscal/api-client';
+import { origemAliquota } from './aliquotaIss.js';
 
 interface CanonicalRetentionSummaryCardProps {
   summary: RetentionSummary;
@@ -42,6 +43,13 @@ export const CanonicalRetentionSummaryCard: React.FC<CanonicalRetentionSummaryCa
           <h4 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: 'var(--color-text-main)' }}>
             {title}
           </h4>
+          <span
+            title="Antes da autorização os valores são estimados; os oficiais vêm da NFS-e autorizada pela Sefin."
+            style={{ fontSize: '0.75rem', padding: '0.2rem 0.5rem', borderRadius: '4px', fontWeight: 600,
+              backgroundColor: 'var(--color-bg-subtle)', color: 'var(--color-text-subtle)' }}
+          >
+            Estimativa — valores oficiais na autorização
+          </span>
           {!summary.complete && (
             <span
               style={{
@@ -135,12 +143,19 @@ export const CanonicalRetentionSummaryCard: React.FC<CanonicalRetentionSummaryCa
             </div>
             <div style={{ fontSize: '1rem', fontWeight: 700, marginTop: '0.25rem', color: summary.iss.retained ? '#DC2626' : 'var(--color-text-main)' }}>
               {summary.iss.retained
-                ? (summary.iss.amount ? formatCurrencyPtBr(summary.iss.amount) : 'A definir pela Sefin')
+                ? (summary.iss.amount ? formatCurrencyPtBr(summary.iss.amount) : 'A definir pela Sefin (não é zero)')
                 : 'Não retido (R$ 0,00)'}
             </div>
             <div style={{ fontSize: '0.6875rem', color: 'var(--color-text-subtle)', marginTop: '0.125rem' }}>
-              Alíquota: {formatOptionalPercent(summary.iss.rate)}
+              {summary.iss.rate
+                ? <>Alíquota usada: {formatOptionalPercent(summary.iss.rate)} ({origemAliquota(summary.iss.rate_source)})</>
+                : 'Sem pAliq e sem alíquota de referência: a Sefin aplica a do município'}
             </div>
+            {summary.iss.estimated_amount && (
+              <div style={{ fontSize: '0.6875rem', color: 'var(--color-text-subtle)' }}>
+                ISSQN estimado: {formatCurrencyPtBr(summary.iss.estimated_amount)}
+              </div>
+            )}
           </div>
 
           {/* IRRF Retido */}
@@ -232,7 +247,7 @@ export const CanonicalRetentionSummaryCard: React.FC<CanonicalRetentionSummaryCa
           }}
         >
           <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#991B1B' }}>
-            Total das Retenções (vTotalRet)
+            Total das Retenções (vTotalRet) — estimado
           </div>
           <div style={{ fontSize: '1.25rem', fontWeight: 700, color: '#DC2626' }}>
             {formatCurrencyPtBr(summary.total_withheld)}
@@ -251,7 +266,7 @@ export const CanonicalRetentionSummaryCard: React.FC<CanonicalRetentionSummaryCa
           }}
         >
           <div style={{ fontSize: '0.75rem', fontWeight: 600, color: isNetNegative ? '#991B1B' : '#166534' }}>
-            Valor Líquido da NFS-e (vLiq)
+            Valor Líquido da NFS-e (vLiq) — estimado
           </div>
           <div style={{ fontSize: '1.375rem', fontWeight: 800, color: isNetNegative ? '#DC2626' : '#15803D' }}>
             {formatCurrencyPtBr(summary.net_amount)}

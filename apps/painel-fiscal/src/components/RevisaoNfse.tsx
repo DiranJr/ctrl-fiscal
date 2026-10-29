@@ -7,7 +7,10 @@ import {
   ISS_RETENTION_OPTIONS,
   TP_RET_PIS_COFINS_OPTIONS,
   PIS_COFINS_CST_OPTIONS,
+  IssAliquotaDetails,
+  RetentionSummary,
 } from '@ctrl-fiscal/api-client';
+import { linhasRevisaoIss, origemAliquota, pct } from './aliquotaIss.js';
 
 export interface RevisaoNfseProps {
   prestador: { name?: string | null; cnpj?: string | null };
@@ -20,8 +23,10 @@ export interface RevisaoNfseProps {
   conditionalDiscount?: string | null;
   deductions?: string | null;
   taxSettings?: TaxSettings | null;
-  /** Resumo canônico já calculado (total retido e valor líquido). */
-  retention?: { total_withheld?: string | null; net_amount?: string | null } | null;
+  /** Resumo canônico já calculado (ESTIMATIVA: total retido, líquido e ISS com a alíquota usada). */
+  retention?: Partial<RetentionSummary> | null;
+  /** Resultado da Parametrização na validação (situação do pAliq, convênio e alíquota parametrizada). */
+  aliquotaIss?: IssAliquotaDetails | null;
 }
 
 const ISSQN_TAX: Record<string, string> = {
@@ -85,6 +90,19 @@ const ibsGroups = (ibs: IbsCbs): React.ReactNode[] => {
   return out;
 };
 
+const issEstimado = (r?: Partial<RetentionSummary> | null): string | null => {
+  const iss = r?.iss;
+  if (!iss) return null;
+  if (iss.estimated_amount) return `${money(iss.estimated_amount)} (alíquota ${pct(iss.rate)} — ${origemAliquota(iss.rate_source)})`;
+  return 'A definir pela Sefin: sem pAliq e sem alíquota de referência (não é ISS zero)';
+};
+
+const totalEstimado = (r: Partial<RetentionSummary> | null | undefined, v?: string | null): string | null => {
+  const m = money(v);
+  if (!m) return null;
+  return r && r.complete === false ? `${m} — parcial (sem valores a definir pela Sefin)` : m;
+};
+
 /** Revisão agrupada da NFS-e antes de agendar/transmitir: Prestador, Tomador, Serviço, Valores e Tributos. */
 export const RevisaoNfse: React.FC<RevisaoNfseProps> = (p) => {
   const s = p.service;
@@ -130,14 +148,16 @@ export const RevisaoNfse: React.FC<RevisaoNfseProps> = (p) => {
           <Row k="Desconto incondicionado" v={money(p.unconditionalDiscount)} />
           <Row k="Desconto condicionado" v={money(p.conditionalDiscount)} />
           <Row k="Deduções" v={money(p.deductions)} />
-          <Row k="Total retido" v={money(p.retention?.total_withheld)} />
-          <Row k="Valor líquido" v={p.retention?.net_amount ? <strong>{money(p.retention.net_amount)}</strong> : null} />
+          <Row k="ISSQN estimado" v={issEstimado(p.retention)} />
+          <Row k="Total retido (estimado)" v={totalEstimado(p.retention, p.retention?.total_withheld)} />
+          <Row k="Valor líquido (estimado)" v={p.retention?.net_amount ? <strong>{totalEstimado(p.retention, p.retention.net_amount)}</strong> : null} />
+          <Row k="Valores oficiais" v="Definidos pela Sefin na autorização; a estimativa é conferida com eles no documento emitido." />
         </Group>
 
         <Group title="Tributos">
           <Row k="ISSQN" v={t.issqn_taxation ? ISSQN_TAX[t.issqn_taxation] || t.issqn_taxation : null} />
           <Row k="Retenção do ISS" v={optLabel(ISS_RETENTION_OPTIONS, t.iss_retention)} />
-          <Row k="Alíquota do ISS" v={t.iss_rate ? `${t.iss_rate}%` : null} />
+          {linhasRevisaoIss(t, p.aliquotaIss).map((l) => <Row key={l.k} k={l.k} v={l.v} />)}
           <Row k="IRRF retido" v={money(t.irrf_withheld)} />
           <Row k="Contribuição previdenciária retida" v={money(t.inss_withheld)} />
           <Row k="Contribuições retidas (CSLL/PCC)" v={money(t.csll_withheld)} />

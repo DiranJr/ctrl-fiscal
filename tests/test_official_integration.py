@@ -48,6 +48,7 @@ class FakeGov:
         # aqui, de forma independente do backend, pela fórmula do XSD/Anexo I (vBC, vISSQN, vTotalRet, vLiq).
         self.embed_posted_dps = False
         self.aliquota_parametrizada = "2.00"  # usada pela "Sefin" quando a DPS não traz pAliq
+        self.param_indisponivel = False  # Parametrização fora do ar (HTTP 503)
         # Relógio da "Sefin" (callable → datetime). Quando definido, toda resposta traz o cabeçalho Date e a DPS com
         # dhEmi posterior ao processamento é rejeitada (E0008), como no ambiente oficial.
         self.server_now = None
@@ -91,6 +92,17 @@ class FakeGov:
                                              "Alertas": [], "Erros": [], "TipoAmbiente": 2})
         if service == "param" and req.method == "GET":
             mun = path.split("/")[2] if path.count("/") >= 2 else ""
+            if self.param_indisponivel:
+                return httpx.Response(503, json={})
+            if path.endswith("/aliquota"):  # /parametrizacao/{mun}/{99.99.99.999}/{AAAA-MM-01T00:00:00}/aliquota
+                serv = path.split("/")[3]
+                if len(serv) != 12:
+                    return httpx.Response(400, json={"aliquotas": None, "mensagem": "Chamada mal formada. O código do "
+                                                     "serviço deve ser composto por nove dígitos."})
+                return httpx.Response(200, json={"aliquotas": {serv: [{"Incidencia": "SIM",
+                                                                       "Aliq": float(self.aliquota_parametrizada),
+                                                                       "DtIni": "2025-11-01T00:00:00", "DtFim": None}]},
+                                                 "mensagem": "Alíquotas recuperadas com sucesso."})
             if path.endswith("/convenio") and mun in self.convenio_inativo:
                 return httpx.Response(404, json={"parametrosConvenio": None,
                                                  "mensagem": "O convênio do município ainda não está ativo"})
@@ -646,36 +658,46 @@ def test_dps_customer_phone_and_pis_cofins_detail_order():
 
 
 def test_paliq_rules_e0617_and_e0595(ostack, real):
+    # Convênio ATIVO (Parametrização consultada na validação): pAliq informado é bloqueio E0617 com orientação própria.
     base = {"issqn_taxation": "TAXABLE", "iss_retention": "NOT_RETAINED", "approx_tax": APPROX}
     d = official_draft(ostack, real, tax_settings={**base, "iss_rate": "5.00"})
     v = ostack.fiscal.post(f"{F}/{real['id']}/drafts/{d['id']}/validate", headers=real["h"]).json()
-    codes = {i["code"] for i in v["issues"] if i["severity"] == "error"}
-    warns = {i["code"] for i in v["issues"] if i["severity"] == "warning"}
-    assert v["valid"] is True and not codes and "PALIQ_DEPENDS_ON_INCIDENCE_CONVENIO" in warns
+    err = next(i for i in v["issues"] if i["code"] == "PALIQ_NOT_ALLOWED_BY_CONVENIO")
+    assert v["valid"] is False and err["severity"] == "error" and err["rule"] == "E0617"
+    assert "ATIVO" in err["message"] and "Mover para a referência" in err["action"]
+    assert err["reason_source"].startswith("Anexo I") and err["details"]["convenio"] == "ACTIVE"
+    assert "PALIQ_DEPENDS_ON_INCIDENCE_CONVENIO" not in {i["code"] for i in v["issues"]}
     d6 = official_draft(ostack, real, tax_settings={**base, "iss_rate": "6.00"})
     v6 = ostack.fiscal.post(f"{F}/{real['id']}/drafts/{d6['id']}/validate", headers=real["h"]).json()
     assert "PALIQ_ABOVE_5" in {i["code"] for i in v6["issues"] if i["severity"] == "error"}
 
 
 def test_paliq_e0617_e0619_by_incidence_convenio_at_transmission(ostack, real, gov):
-    # Convênio do município de incidência ATIVO + alíquota informada => recusa local E0617, sem POST.
-    d = official_draft(ostack, real, tax_settings={"issqn_taxation": "TAXABLE", "iss_retention": "NOT_RETAINED",
-                                                   "iss_rate": "5.00", "approx_tax": APPROX})
+    """A regra é conferida de novo na transmissão: se o convênio mudar entre o agendamento e o envio, nada sai."""
+    from core_api import parametrizacao_iss
+
+    pa = {"issqn_taxation": "TAXABLE", "iss_retention": "NOT_RETAINED", "iss_rate": "5.00", "approx_tax": APPROX}
+    # Agendado com convênio INATIVO (pAliq obrigatório e informado); ATIVO na hora do envio => LOCAL_E0617, sem POST.
+    gov.convenio_inativo.add(MUN)
+    d = official_draft(ostack, real, tax_settings=pa)
     b = schedule_now(ostack, real, [d])
+    gov.convenio_inativo.discard(MUN)
     ostack.worker().run_emissions()
     item = batch_items(ostack, real, b["batch_id"])[0]
     assert item["status"] == "REJECTED" and item["result"]["errors"][0]["code"] == "LOCAL_E0617" and gov.posts() == []
+    assert "Nada foi transmitido" in item["result"]["errors"][0]["message"]
     assert any(c[0] == "param" and c[3] == f"/parametrizacao/{MUN}/convenio" for c in gov.calls)
-    # Convênio INATIVO no ambiente + sem alíquota => recusa local E0619, sem POST.
-    gov.convenio_inativo.add(MUN)
+    # Agendado com convênio ATIVO sem pAliq; INATIVO na hora do envio => LOCAL_E0619, sem POST.
+    parametrizacao_iss._cache.clear()
     d2 = official_draft(ostack, real)
     b2 = schedule_now(ostack, real, [d2])
+    gov.convenio_inativo.add(MUN)
     ostack.worker().run_emissions()
     item2 = batch_items(ostack, real, b2["batch_id"])[0]
     assert item2["status"] == "REJECTED" and item2["result"]["errors"][0]["code"] == "LOCAL_E0619" and gov.posts() == []
     # Convênio INATIVO + alíquota informada => transmite.
-    d3 = official_draft(ostack, real, tax_settings={"issqn_taxation": "TAXABLE", "iss_retention": "NOT_RETAINED",
-                                                    "iss_rate": "5.00", "approx_tax": APPROX})
+    parametrizacao_iss._cache.clear()
+    d3 = official_draft(ostack, real, tax_settings=pa)
     b3 = schedule_now(ostack, real, [d3])
     ostack.worker().run_emissions()
     assert batch_items(ostack, real, b3["batch_id"])[0]["status"] == "AUTHORIZED" and len(gov.posts()) == 1

@@ -38,6 +38,7 @@ import {
   CalculateSummaryParams,
 } from '@ctrl-fiscal/api-client';
 import { TributosRetencoesForm, TributosRetencoesState } from '../components/TributosRetencoesForm.js';
+import { detalhesAliquotaIss } from '../components/aliquotaIss.js';
 import { CanonicalRetentionSummaryCard } from '../components/CanonicalRetentionSummaryCard.js';
 import { useCanonicalRetentions } from '../components/useCanonicalRetentions.js';
 
@@ -45,6 +46,7 @@ const EMPTY_TRIBUTOS: TributosRetencoesState = {
   issqnTaxation: 'TAXABLE',
   issRetention: 'NOT_RETAINED',
   issRate: '',
+  issReferenceRate: '',
   immunityType: '1',
   irrfWithheld: '',
   inssWithheld: '',
@@ -137,6 +139,7 @@ export const NovaNfsePage: React.FC<{ onNavigate: (route: string) => void }> = (
         issqn_taxation: tributosState.issqnTaxation,
         iss_retention: tributosState.issRetention,
         iss_rate: tributosState.issRate.trim() || null,
+        iss_reference_rate: tributosState.issReferenceRate.trim() || null,
         immunity_type: tributosState.issqnTaxation === 'IMMUNE' ? tributosState.immunityType : null,
         irrf_withheld: tributosState.irrfWithheld.trim() ? parseCurrencyPtBrToDecimal(tributosState.irrfWithheld) : null,
         inss_withheld: tributosState.inssWithheld.trim() ? parseCurrencyPtBrToDecimal(tributosState.inssWithheld) : null,
@@ -238,6 +241,7 @@ export const NovaNfsePage: React.FC<{ onNavigate: (route: string) => void }> = (
       issqnTaxation: ts.issqn_taxation || 'TAXABLE',
       issRetention: ts.iss_retention || 'NOT_RETAINED',
       issRate: ts.iss_rate || '',
+      issReferenceRate: ts.iss_reference_rate || '',
       immunityType: ts.immunity_type || '1',
       irrfWithheld: ts.irrf_withheld ? formatCurrencyPtBr(ts.irrf_withheld, false) : '',
       inssWithheld: ts.inss_withheld ? formatCurrencyPtBr(ts.inss_withheld, false) : '',
@@ -378,6 +382,7 @@ export const NovaNfsePage: React.FC<{ onNavigate: (route: string) => void }> = (
       issqn_taxation: tributosState.issqnTaxation,
       iss_retention: tributosState.issRetention,
       iss_rate: tributosState.issRate && tributosState.issRate.trim() ? tributosState.issRate.trim() : null,
+      iss_reference_rate: tributosState.issReferenceRate && tributosState.issReferenceRate.trim() ? tributosState.issReferenceRate.trim() : null,
       immunity_type: tributosState.issqnTaxation === 'IMMUNE' ? tributosState.immunityType : null,
       irrf_withheld: tributosState.irrfWithheld.trim() ? parseCurrencyPtBrToDecimal(tributosState.irrfWithheld) : null,
       inss_withheld: tributosState.inssWithheld.trim() ? parseCurrencyPtBrToDecimal(tributosState.inssWithheld) : null,
@@ -1112,6 +1117,7 @@ export const NovaNfsePage: React.FC<{ onNavigate: (route: string) => void }> = (
               onChange={handleTributoChange}
               errors={fieldErrors}
               isCardWrapper={false}
+              aliquotaIss={detalhesAliquotaIss(validationIssues)}
             />
           </ScreenSection>
 
@@ -1257,7 +1263,8 @@ export const NovaNfsePage: React.FC<{ onNavigate: (route: string) => void }> = (
               conditionalDiscount={reviewPayload.conditional_discount}
               deductions={reviewPayload.deductions}
               taxSettings={reviewPayload.tax_settings}
-              retention={{ total_withheld: retentionSummary.total_withheld, net_amount: retentionSummary.net_amount }}
+              retention={retentionSummary}
+              aliquotaIss={detalhesAliquotaIss(validationIssues)}
             />
 
             <p className="pf-help">

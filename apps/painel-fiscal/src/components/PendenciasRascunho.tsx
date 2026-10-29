@@ -66,7 +66,11 @@ const Item: React.FC<{ i: ValidationIssue; companyId?: string | null; onGoToFiel
         <p className="pf-pend-motivo"><strong>Motivo (texto oficial):</strong> {i.reason}</p>
       ) : null}
       {i.reason_source && <p className="pf-help pf-pend-fonte">Origem: {i.reason_source}</p>}
-      {i.action && <p className="pf-pend-acao"><strong>Como corrigir:</strong> {i.action}</p>}
+      {i.action && (
+        <p className="pf-pend-acao">
+          <strong>{i.severity === 'error' ? 'Como corrigir:' : i.severity === 'warning' ? 'O que conferir:' : 'Orientação:'}</strong> {i.action}
+        </p>
+      )}
       {(campo && onGoToField) || link ? (
         <div className="pf-pend-botoes">
           {campo && onGoToField && (

@@ -223,6 +223,25 @@ def create_app(settings: NfseSettings, clock: Clock | None = None, mock_provider
         except (TransmissionNotSent, TransmissionUncertain) as exc:
             raise ProblemError(503, "PARAMETRIZACAO_UNAVAILABLE", exc.code)
 
+    @app.get("/internal/v1/companies/{company_id}/municipal-parameters/{municipio}/aliquota")
+    def municipal_aliquota(company_id: str, municipio: str, request: Request,
+                           environment: Literal["restricted", "production"] = Query(...),
+                           cnpj: str = Query(..., pattern=r"^[0-9A-Z]{12}[0-9]{2}$"),
+                           servico: str = Query(..., pattern=r"^[0-9]{2}\.[0-9]{2}\.[0-9]{2}\.[0-9]{3}$"),
+                           competencia: str = Query(..., pattern=r"^[0-9]{4}-(0[1-9]|1[0-2])$")) -> dict:
+        auth.authenticate(request, "integration:read")
+        if not (municipio.isdigit() and len(municipio) == 7):
+            raise ProblemError(422, "MUNICIPIO_INVALIDO", "Código IBGE com 7 dígitos.")
+        prov: OfficialProvider = providers[environment]  # type: ignore[assignment]
+        try:
+            return {"environment": environment, "municipio": municipio, "servico": servico, "competencia": competencia,
+                    **prov.municipal_aliquota(CompanyContext(company_id, cnpj, environment), municipio, servico,
+                                              competencia)}
+        except ProviderBlocked as exc:
+            raise ProblemError(409, exc.code, exc.message)
+        except (TransmissionNotSent, TransmissionUncertain) as exc:
+            raise ProblemError(503, "PARAMETRIZACAO_UNAVAILABLE", exc.code)
+
     @app.post("/internal/v1/submissions")
     def submit(body: SubmissionIn, request: Request) -> dict:
         auth.authenticate(request, "submissions:write")

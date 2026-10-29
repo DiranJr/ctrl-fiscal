@@ -116,6 +116,24 @@ class CoreClient:
             return None
         raise UpstreamError("CORE_UNAVAILABLE", r.status_code)
 
+    def parametrizacao_iss(self, company_id: str, municipio: str, servico: str | None,
+                           competencia: str | None) -> dict:
+        """Convênio do município de incidência e alíquota parametrizada (leitura oficial via core → conector).
+        Nunca levanta erro: indisponibilidade volta como status UNAVAILABLE (sem presumir convênio nem alíquota)."""
+        params = {"municipio": municipio, **({"servico": servico, "competencia": competencia}
+                                             if servico and competencia else {})}
+        indisponivel = {"municipio": municipio, "convenio": {"status": "UNAVAILABLE", "detail": "CORE_UNAVAILABLE"},
+                        "aliquota": {"status": "UNAVAILABLE", "rate": None, "servico": servico,
+                                     "competencia": competencia}}
+        try:
+            r = self._http.get(f"/internal/v1/companies/{company_id}/parametrizacao-iss", params=params,
+                               headers=self._headers, timeout=12.0)
+        except httpx.HTTPError:
+            return indisponivel
+        if r.status_code != 200:
+            return {**indisponivel, "convenio": {"status": "UNAVAILABLE", "detail": f"CORE_HTTP_{r.status_code}"}}
+        return r.json()
+
     def _post(self, path: str, body: dict) -> httpx.Response:
         try:
             return self._http.post(path, json=body, headers=self._headers, timeout=15.0)

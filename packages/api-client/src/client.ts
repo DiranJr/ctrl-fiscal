@@ -1107,6 +1107,7 @@ export class HttpFiscalApiClient implements IFiscalApiClient {
       if (req.tax_settings.issqn_taxation !== undefined) ts.issqn_taxation = req.tax_settings.issqn_taxation;
       if (req.tax_settings.iss_retention !== undefined) ts.iss_retention = req.tax_settings.iss_retention;
       if (req.tax_settings.iss_rate !== undefined) ts.iss_rate = req.tax_settings.iss_rate;
+      if (req.tax_settings.iss_reference_rate !== undefined) ts.iss_reference_rate = req.tax_settings.iss_reference_rate;
       if (req.tax_settings.pis_cofins_retention !== undefined) ts.pis_cofins_retention = req.tax_settings.pis_cofins_retention;
       if (req.tax_settings.irrf_withheld !== undefined) ts.irrf_withheld = req.tax_settings.irrf_withheld;
       if (req.tax_settings.inss_withheld !== undefined) ts.inss_withheld = req.tax_settings.inss_withheld;
@@ -1195,6 +1196,7 @@ export class HttpFiscalApiClient implements IFiscalApiClient {
         if (req.tax_settings.immunity_type !== undefined) ts.immunity_type = req.tax_settings.immunity_type;
         if (req.tax_settings.iss_retention !== undefined) ts.iss_retention = req.tax_settings.iss_retention;
         if (req.tax_settings.iss_rate !== undefined) ts.iss_rate = req.tax_settings.iss_rate;
+        if (req.tax_settings.iss_reference_rate !== undefined) ts.iss_reference_rate = req.tax_settings.iss_reference_rate;
         if (req.tax_settings.pis_cofins_retention !== undefined) ts.pis_cofins_retention = req.tax_settings.pis_cofins_retention;
         if (req.tax_settings.irrf_withheld !== undefined) ts.irrf_withheld = req.tax_settings.irrf_withheld;
         if (req.tax_settings.inss_withheld !== undefined) ts.inss_withheld = req.tax_settings.inss_withheld;

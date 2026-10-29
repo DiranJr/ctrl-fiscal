@@ -486,6 +486,28 @@ export interface FiscalDocument {
   substitution?: SubstitutionOut | null;
   /** GET /documents/{id}: IBS/CBS CALCULADOS pela Sefin (infNFSe/IBSCBS), texto exato do XML. Não é a prévia local. */
   ibs_cbs_official?: IbsCbsOfficial | null;
+  /** GET /documents/{id}: NFS-e emitida pela plataforma — estimativa do agendamento × valores oficiais da Sefin. */
+  iss_reconciliation?: IssReconciliation | null;
+}
+
+export interface IssReconciliationLine {
+  key: 'iss_rate' | 'iss_amount' | 'iss_retained' | 'total_withheld' | 'net_amount' | string;
+  label: string;
+  estimated?: string | null;
+  official?: string | null;
+  status: 'MATCH' | 'DIFFERENT' | 'ESTIMATE_MISSING' | 'OFFICIAL_MISSING';
+  difference?: string | null;
+}
+
+export interface IssReconciliation {
+  status: 'MATCH' | 'DIFFERENT' | 'PARTIAL';
+  /** pAliq enviado na DPS (null = não enviado). */
+  dps_rate?: string | null;
+  /** Alíquota de referência interna (nunca enviada). */
+  reference_rate?: string | null;
+  rate_source?: 'DPS_PALIQ' | 'REFERENCE' | null;
+  lines: IssReconciliationLine[];
+  note: string;
 }
 
 export interface IbsCbsOfficial {
@@ -635,6 +657,27 @@ export interface ValidationIssue {
   xml_path?: string | null;
   action?: string | null;
   target?: IssueTarget | null;
+  /** Dados estruturados (ex.: alíquota do ISS — ver IssAliquotaDetails). */
+  details?: IssAliquotaDetails | Record<string, unknown> | null;
+}
+
+/** Resultado da Parametrização para a alíquota do ISS (pendências PALIQ_* / ISS_* da validação). */
+export interface IssAliquotaDetails {
+  paliq_status: 'PROHIBITED' | 'REQUIRED' | 'OPTIONAL' | 'UNKNOWN';
+  rule?: string | null;
+  possible_rules?: string[];
+  convenio?: 'ACTIVE' | 'INACTIVE' | 'UNAVAILABLE' | 'NOT_APPLICABLE' | null;
+  convenio_detail?: string | null;
+  municipio?: string | null;
+  municipio_nome?: string | null;
+  environment?: string | null;
+  consulted_at?: string | null;
+  municipal_rate?: string | null;
+  municipal_rate_status?: 'FOUND' | 'NOT_FOUND' | 'UNAVAILABLE' | 'NOT_REQUESTED' | 'NOT_APPLICABLE' | null;
+  service_code?: string | null;
+  competence?: string | null;
+  dps_rate?: string | null;
+  reference_rate?: string | null;
 }
 
 export interface CustomerSnapshot {
@@ -690,7 +733,10 @@ export interface IbsCbs {
 export interface TaxSettings {
   issqn_taxation?: 'TAXABLE' | 'IMMUNE' | 'EXPORT' | 'NOT_INCIDENT' | null;
   iss_retention?: 'NOT_RETAINED' | 'RETAINED_BY_TOMADOR' | 'RETAINED_BY_INTERMEDIARY' | null;
+  /** pAliq ENVIADO na DPS. */
   iss_rate?: string | null;
+  /** Alíquota de REFERÊNCIA (%): só para a estimativa de ISS, retenção e líquido; nunca vai na DPS. */
+  iss_reference_rate?: string | null;
   pis_cofins_retention?: '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' | null;
   irrf_withheld?: string | null;
   inss_withheld?: string | null;
@@ -710,9 +756,17 @@ export interface RetentionIss {
   retention?: string | null;
   retained: boolean;
   base: string;
+  /** Alíquota usada na ESTIMATIVA: o pAliq enviado ou, sem ele, a referência. */
   rate?: string | null;
+  rate_source?: 'DPS_PALIQ' | 'REFERENCE' | null;
+  /** pAliq enviado na DPS (null = não enviado). */
+  dps_rate?: string | null;
+  /** Alíquota de referência interna (não vai na DPS). */
+  reference_rate?: string | null;
+  /** vISSQN estimado (retido ou não). */
+  estimated_amount?: string | null;
   amount?: string | null;
-  amount_source: 'NOT_RETAINED' | 'ESTIMATED_FROM_RATE' | 'DETERMINED_BY_SEFIN' | string;
+  amount_source: 'NOT_RETAINED' | 'ESTIMATED_FROM_RATE' | 'ESTIMATED_FROM_REFERENCE' | 'DETERMINED_BY_SEFIN' | string;
 }
 
 export interface RetentionCovered {
@@ -750,6 +804,8 @@ export interface RetentionSummary {
   net_amount: string;
   complete: boolean;
   pending: string[];
+  /** Sempre estimativa antes da autorização; o oficial vem da NFS-e (iss_reconciliation). */
+  basis?: 'ESTIMATE';
 }
 
 export interface DraftValidation {

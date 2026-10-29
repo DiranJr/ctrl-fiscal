@@ -55,6 +55,7 @@ PATHS = {
     "adn_dfe": "/DFe/{nsu}",
     "adn_events": "/NFSe/{chave}/Eventos",
     "param_convenio": "/{municipio}/convenio",
+    "param_aliquota": "/{municipio}/{servico}/{competencia}/aliquota",
 }
 
 

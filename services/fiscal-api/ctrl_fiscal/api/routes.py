@@ -162,7 +162,26 @@ def documents(
 @router.get("/documents/{document_id}", response_model=sc.DocumentDetail, responses=E, tags=["documents"])
 def document_detail(document_id: str, cc: CompanyCtx = Depends(company_ctx("view")), s: Session = Depends(db_session)) -> dict:
     d = get_document(s, cc.company.id, document_id)
-    return {**document_out(d), "events": [event_out(e) for e in events_for(s, d)], "ibs_cbs_official": d.ibs_cbs_official}
+    return {**document_out(d), "events": [event_out(e) for e in events_for(s, d)], "ibs_cbs_official": d.ibs_cbs_official,
+            "iss_reconciliation": _iss_reconciliation(s, cc, d)}
+
+
+def _iss_reconciliation(s: Session, cc: CompanyCtx, d: Document) -> dict | None:
+    """Estimativa congelada no item do lote × valores oficiais da NFS-e (somente leitura)."""
+    from ..domain import reconciliacao_iss  # noqa: PLC0415
+
+    if d.source != "EMISSION":
+        return None
+    item = s.scalar(select(BatchItem).where(BatchItem.company_id == cc.company.id,  # prefixo de uq_item_dps_number
+                                            BatchItem.environment == d.environment, BatchItem.document_id == d.id)
+                    .order_by(BatchItem.updated_at.desc()).limit(1))
+    if item is None:
+        return None
+    xml = None
+    if d.xml_blob_id is not None:
+        blob = s.get(StoredBlob, d.xml_blob_id)
+        xml = read_blob(blob) if blob is not None and blob.company_id == cc.company.id else None
+    return reconciliacao_iss.reconciliar(item.snapshot, d, xml)
 
 
 def _cancel_info(s: Session, cc: CompanyCtx, d: Document, now, production_enabled: bool) -> dict:  # noqa: ANN001
@@ -451,7 +470,9 @@ def validate(draft_id: str, request: Request, cc: CompanyCtx = Depends(company_c
     profile = _core_guard(lambda: c.core.service_profile(cc.company.id, d.service_profile_id)
                           if d.service_profile_id else None)
     issues = drafts_d.validate_draft(d, cc.company, customer, c.clock.now(), profile,
-                                     production_emission_enabled=c.settings.production_emission_enabled)
+                                     production_emission_enabled=c.settings.production_emission_enabled,
+                                     parametrizacao=drafts_d.consultar_parametrizacao_iss(c.core, cc.company, d,
+                                                                                          customer))
     drafts_d.record_validation(d, issues, c.clock.now())  # vale só para a versão atual; não autoriza nada
     s.commit()
     from ..domain import pendencias  # noqa: PLC0415

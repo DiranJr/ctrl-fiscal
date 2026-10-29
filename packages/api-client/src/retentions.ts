@@ -114,7 +114,8 @@ export interface CalculateSummaryParams {
  *
  * Fórmulas canônicas (DPS v1.01):
  * vBC = vServ − vDescIncond − vDR
- * vISSQN = vBC × pAliq / 100 (arredondamento bancário ROUND_HALF_EVEN)
+ * vISSQN = vBC × alíquota / 100 (arredondamento bancário ROUND_HALF_EVEN); alíquota = pAliq enviado ou, sem ele,
+ *          a alíquota de REFERÊNCIA (não vai na DPS). Sem nenhuma: ISS "a definir pela Sefin" (nunca zero).
  * vTotalRet = vRetCP + vRetIRRF + vRetCSLL + vISSQN (só se retido)
  * vLiq = vServ − vDescIncond − vDescCond − vTotalRet
  *
@@ -135,23 +136,25 @@ export function calculateRetentionSummary(params: CalculateSummaryParams): Reten
 
   const baseCents = vServCents - dIncCents - vDrCents; // sem limitar a zero (igual ao backend)
 
-  let issRateH: bigint | null = null;
-  if (tax.iss_rate !== null && tax.iss_rate !== undefined && tax.iss_rate.trim() !== '') {
-    issRateH = rateHundredths(tax.iss_rate);
-  }
+  const filled = (v?: string | null) => (v !== null && v !== undefined && v.trim() !== '' ? v.trim() : null);
+  const dpsRate = filled(tax.iss_rate);
+  const referenceRate = filled(tax.iss_reference_rate);
+  const dpsRateH = dpsRate !== null ? rateHundredths(dpsRate) : null;
+  const referenceRateH = referenceRate !== null ? rateHundredths(referenceRate) : null;
+  const rateSource: 'DPS_PALIQ' | 'REFERENCE' | null = dpsRateH !== null ? 'DPS_PALIQ' : referenceRateH !== null ? 'REFERENCE' : null;
+  const issRateH = rateSource === 'DPS_PALIQ' ? dpsRateH : rateSource === 'REFERENCE' ? referenceRateH : null;
+  const estimatedCents = issRateH !== null ? issHalfEven(baseCents, issRateH) : null;
 
   let issAmountCents: bigint | null = null;
-  let issSource: 'NOT_RETAINED' | 'ESTIMATED_FROM_RATE' | 'DETERMINED_BY_SEFIN' = 'NOT_RETAINED';
+  let issSource: 'NOT_RETAINED' | 'ESTIMATED_FROM_RATE' | 'ESTIMATED_FROM_REFERENCE' | 'DETERMINED_BY_SEFIN' = 'NOT_RETAINED';
 
   if (!issRetained) {
-    issAmountCents = null;
     issSource = 'NOT_RETAINED';
-  } else if (issRateH === null) {
-    issAmountCents = null;
+  } else if (estimatedCents === null) {
     issSource = 'DETERMINED_BY_SEFIN';
   } else {
-    issAmountCents = issHalfEven(baseCents, issRateH);
-    issSource = 'ESTIMATED_FROM_RATE';
+    issAmountCents = estimatedCents;
+    issSource = rateSource === 'DPS_PALIQ' ? 'ESTIMATED_FROM_RATE' : 'ESTIMATED_FROM_REFERENCE';
   }
 
   const inssCents = tax.inss_withheld ? toCents(tax.inss_withheld) : 0n;
@@ -181,7 +184,11 @@ export function calculateRetentionSummary(params: CalculateSummaryParams): Reten
       retention: retIss,
       retained: issRetained,
       base: fromCents(baseCents),
-      rate: issRateH !== null ? (tax.iss_rate || null) : null,
+      rate: rateSource === 'DPS_PALIQ' ? dpsRate : rateSource === 'REFERENCE' ? referenceRate : null,
+      rate_source: rateSource,
+      dps_rate: dpsRateH !== null ? dpsRate : null,
+      reference_rate: referenceRateH !== null ? referenceRate : null,
+      estimated_amount: estimatedCents !== null ? fromCents(estimatedCents) : null,
       amount: issAmountCents !== null ? fromCents(issAmountCents) : null,
       amount_source: issSource,
     },
@@ -207,5 +214,6 @@ export function calculateRetentionSummary(params: CalculateSummaryParams): Reten
     net_amount: fromCents(netCents),
     complete: pending.length === 0,
     pending,
+    basis: 'ESTIMATE',
   };
 }
