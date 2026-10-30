@@ -1133,9 +1133,9 @@ export class MockFiscalApiClient implements IFiscalApiClient {
       throw new ProblemDetailsException({ type: 'urn:problem:version-conflict', title: 'Conflito de Versão', status: 409,
         detail: 'Rascunho alterado por outra pessoa. Recarregue antes de excluir.' });
     }
-    if (!['DRAFT', 'WITHDRAWN'].includes(current.status) || current.current_item_id) {
+    if (current.deletion ? !current.deletion.allowed : !['DRAFT', 'WITHDRAWN', 'REJECTED'].includes(current.status)) {
       throw new ProblemDetailsException({ type: 'urn:problem:conflict', title: 'Rascunho não pode ser excluído', status: 409,
-        detail: `Rascunho em ${current.status} não pode ser excluído.` });
+        detail: current.deletion?.reason || `Rascunho em ${current.status} não pode ser excluído.` });
     }
     this.drafts.set(companyId, list.filter((d) => d.id !== draftId));
     return { id: draftId, deleted: true, deleted_at: new Date().toISOString(), version: current.version + 1, already_deleted: false };

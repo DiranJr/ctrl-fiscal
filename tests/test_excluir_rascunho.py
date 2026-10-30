@@ -1,6 +1,8 @@
 """Excluir rascunho: exclusão LÓGICA, só sem transmissão e sem vínculo com processamento fiscal; recusa estados
-agendado/em fila/transmitindo/incerto/emitido/rejeitado; idempotente; isolada por workspace e permissão "prepare";
-protegida contra concorrência com editar, emitir agora e agendar. Somente dados fictícios (governo simulado)."""
+agendado/em fila/transmitindo/incerto/emitido/rejeitado pela Sefin (com o motivo em "deletion"); vínculo antigo com
+item retirado ou barrado pela validação local antes do envio não impede; idempotente; isolada por workspace e
+permissão "prepare"; protegida contra concorrência com editar, emitir agora e agendar. Somente dados fictícios
+(governo simulado)."""
 from __future__ import annotations
 
 import threading
@@ -80,18 +82,20 @@ def test_agendado_exige_cancelar_antes_e_depois_pode_excluir(stack, world):
     d = make_draft(stack, world)
     schedule(stack, world, [d], stack.clock.now() + timedelta(hours=2))
     ag = atual(stack, world, d)
+    assert ag["deletion"]["allowed"] is False and ag["deletion"]["reason_code"] == "DRAFT_SCHEDULED"
     r = excluir(stack, world, ag)
     assert r.status_code == 409 and r.json()["code"] == "DRAFT_NOT_DELETABLE" and "Retire-o da fila" in r.json()["detail"]
     w = stack.fiscal.post(f"{F}/{world['a']}/drafts/{d['id']}/withdraw", headers=world["ha"],
                           json={"expected_version": ag["version"]})
-    assert w.status_code == 200 and w.json()["status"] == "DRAFT"
+    assert w.status_code == 200 and w.json()["status"] == "DRAFT" and w.json()["deletion"]["allowed"] is True
     r = excluir(stack, world, w.json())
     assert r.status_code == 200, r.text  # item retirado antes de qualquer envio não é vínculo de processamento
 
 
-@pytest.mark.parametrize("plano,status_item", [
-    ([], "AUTHORIZED"), (["timeout_after_accept"], "AWAITING_CONFIRMATION"), (["reject"], "REJECTED")])
-def test_estados_com_processamento_fiscal_sao_recusados(stack, world, plano, status_item):
+@pytest.mark.parametrize("plano,status_item,motivo", [
+    ([], "AUTHORIZED", "DRAFT_AUTHORIZED"), (["timeout_after_accept"], "AWAITING_CONFIRMATION", "DRAFT_UNCERTAIN"),
+    (["reject"], "REJECTED", "DRAFT_TRANSMITTED")])
+def test_estados_com_processamento_fiscal_sao_recusados(stack, world, plano, status_item, motivo):
     from ctrl_fiscal.models import BatchItem, Document
 
     d = make_draft(stack, world)
@@ -103,13 +107,16 @@ def test_estados_com_processamento_fiscal_sao_recusados(stack, world, plano, sta
     with stack.fiscal_sessions() as s:
         docs_antes = s.scalar(select(func.count()).select_from(Document))
     cur = atual(stack, world, d)
+    assert cur["deletion"]["allowed"] is False and cur["deletion"]["reason_code"] == motivo and cur["deletion"]["reason"]
     r = excluir(stack, world, cur)
     assert r.status_code == 409 and r.json()["code"] == "DRAFT_NOT_DELETABLE", r.text
+    assert r.json()["detail"] == cur["deletion"]["reason"]  # o painel mostra o mesmo motivo que o servidor aplica
     if status_item == "REJECTED":
-        # Corrigido após a rejeição volta a DRAFT, mas continua vinculado à submissão: não pode ser excluído.
+        # Rejeição da Sefin (DPS transmitida): corrigido, volta a DRAFT, mas o histórico de transmissão impede excluir.
         fixed = stack.fiscal.patch(f"{F}/{world['a']}/drafts/{d['id']}", headers=world["ha"],
                                    json={"expected_version": cur["version"], "amount": "999.00"}).json()
-        assert fixed["status"] == "DRAFT"
+        assert fixed["status"] == "DRAFT" and fixed["deletion"]["reason_code"] == "DRAFT_TRANSMITTED"
+        assert "histórico de transmissão" in fixed["deletion"]["reason"]
         r = excluir(stack, world, fixed)
         assert r.status_code == 409 and r.json()["code"] == "DRAFT_NOT_DELETABLE"
     with stack.fiscal_sessions() as s:  # nada de nota, item ou submissão foi tocado
@@ -117,6 +124,88 @@ def test_estados_com_processamento_fiscal_sao_recusados(stack, world, plano, sta
         it = s.scalar(select(BatchItem).where(BatchItem.draft_id == d["id"]))
         assert it.status == status_item
     assert atual(stack, world, d)["id"] == d["id"]  # rascunho mantido
+
+
+LOCAL = {"state": "REJECTED", "errors": [{"code": "LOCAL_E0617",
+                                           "message": "Não informe a alíquota (fictício). Nada foi transmitido."}]}
+
+
+def _tentativa(stack, resp: dict) -> None:  # noqa: ANN001
+    """Uma tentativa do worker (lease + resultado), pelo mesmo caminho do worker."""
+    from ctrl_fiscal.domain import emission
+
+    w = stack.worker()
+    it = emission.acquire_items(w.sessions, stack.clock, "w1", limit=5, lease_seconds=60, max_in_flight=10, series="1")[0]
+    emission._finish(w.sessions, stack.clock, "w1", it, resp)
+
+
+def _rejeitar_localmente(stack, world, d: dict, antes: list[dict] = (), resp: dict = LOCAL) -> dict:  # noqa: ANN001
+    """Tentativa barrada pela validação local do conector (LOCAL_*), opcionalmente depois de outras tentativas."""
+    schedule(stack, world, [d], stack.clock.now() + timedelta(minutes=1))
+    for r in [*antes, resp]:
+        stack.clock.advance(hours=2)
+        _tentativa(stack, r)
+    return atual(stack, world, d)
+
+
+@pytest.mark.parametrize("antes,resp,permitido", [
+    ([], {**LOCAL, "transmissions": 1}, True),  # o conector registra UMA chamada, barrada antes do POST
+    ([{"state": "DEFER", "error": {"code": "SERVICE_DATE_NOT_REACHED", "message": "Nada transmitido."}}],
+     {**LOCAL, "transmissions": 1}, True),  # adiamento antes do conector não conta como envio
+    ([{"state": "UNCERTAIN", "error": {"code": "TIMEOUT", "message": "Sem confirmação."}}], LOCAL, False),
+    ([{"state": "UNCERTAIN", "error": {"code": "TIMEOUT", "message": "Sem confirmação."}}],
+     {**LOCAL, "transmissions": 2}, False),  # houve resultado incerto antes: o prefixo LOCAL_ não basta
+    ([], {**LOCAL, "transmissions": 2}, False),
+])
+def test_rejeicao_local_exige_evidencia_de_que_nada_foi_transmitido(stack, world, antes, resp, permitido):
+    d = make_draft(stack, world)
+    cur = _rejeitar_localmente(stack, world, d, antes, resp)
+    assert cur["status"] == "REJECTED", cur["status"]
+    assert cur["deletion"]["allowed"] is permitido, cur["deletion"]
+    if not permitido:
+        assert cur["deletion"]["reason_code"] == "DRAFT_SEND_UNPROVEN" and "comprovação" in cur["deletion"]["reason"]
+    assert excluir(stack, world, cur).status_code == (200 if permitido else 409)
+
+
+def test_rejeicao_local_corrigida_pode_ser_excluida_e_preserva_o_vinculo(stack, world):
+    """Rejeitado só pela validação local e corrigido: volta a DRAFT ("Rascunho") com o vínculo antigo ao item
+    encerrado. Lista, detalhe e exclusão liberam; o vínculo e o item ficam como estavam (nada apagado no banco)."""
+    from ctrl_fiscal.models import AuditEvent, BatchItem, Draft
+
+    d = make_draft(stack, world)
+    rej = _rejeitar_localmente(stack, world, d)
+    assert rej["status"] == "REJECTED" and rej["current_item_id"] and rej["deletion"]["allowed"] is True
+    fixed = stack.fiscal.patch(f"{F}/{world['a']}/drafts/{d['id']}", headers=world["ha"],
+                               json={"expected_version": rej["version"], "amount": "500.00"}).json()
+    assert fixed["status"] == "DRAFT" and fixed["current_item_id"] == rej["current_item_id"]
+    assert fixed["deletion"] == {"allowed": True, "reason_code": None, "reason": None}
+    lista = stack.fiscal.get(f"{F}/{world['a']}/drafts", headers=world["ha"]).json()
+    assert next(x for x in lista["items"] if x["id"] == d["id"])["deletion"]["allowed"] is True
+    assert excluir(stack, world, fixed, h=world["hr"]).status_code == 403  # sem "prepare" continua recusado
+    r = excluir(stack, world, fixed)
+    assert r.status_code == 200, r.text
+    with stack.fiscal_sessions() as s:
+        row = s.get(Draft, d["id"])
+        assert row.deleted_at is not None and row.current_item_id == rej["current_item_id"]
+        it = s.get(BatchItem, rej["current_item_id"])
+        assert it.status == "REJECTED" and it.result["errors"][0]["code"] == "LOCAL_E0617"
+        ev = s.scalar(select(AuditEvent).where(AuditEvent.target_id == d["id"], AuditEvent.action == "draft.deleted"))
+        assert ev.details["items"] == [{"id": it.id, "status": "REJECTED", "stage": "LOCAL_VALIDATION", "attempts": 1,
+                                        "submit_phase": "NONE", "connector_transmissions": None}]
+
+
+def test_rejeicao_local_seguida_de_transmissao_continua_recusada(stack, world):
+    d = make_draft(stack, world)
+    rej = _rejeitar_localmente(stack, world, d)
+    fixed = stack.fiscal.patch(f"{F}/{world['a']}/drafts/{d['id']}", headers=world["ha"],
+                               json={"expected_version": rej["version"], "amount": "501.00"}).json()
+    schedule(stack, world, [fixed], stack.clock.now() + timedelta(minutes=1))
+    stack.clock.advance(minutes=2)
+    stack.mock.plan = ["reject"]
+    stack.worker().run_emissions()
+    cur = atual(stack, world, d)
+    assert cur["status"] == "REJECTED" and cur["deletion"]["reason_code"] == "DRAFT_TRANSMITTED"
+    assert excluir(stack, world, cur).status_code == 409
 
 
 def test_em_transmissao_e_recusado(stack, world):
@@ -134,7 +223,7 @@ def test_em_transmissao_e_recusado(stack, world):
     with pytest.raises(SimulatedCrash):
         w.run_emissions()
     cur = atual(stack, world, d)
-    assert cur["status"] == "PROCESSING"
+    assert cur["status"] == "PROCESSING" and cur["deletion"]["reason_code"] == "DRAFT_PROCESSING"
     r = excluir(stack, world, cur)
     assert r.status_code == 409 and r.json()["code"] == "DRAFT_NOT_DELETABLE"
 

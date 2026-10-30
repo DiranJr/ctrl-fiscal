@@ -12,14 +12,14 @@ from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
 from ctrl_common import aliquota_iss
 from ctrl_common.fiscal_types import is_valid_cnpj, is_valid_cpf
 
 from ..clients import CompanyInfo, CoreClient
 from ..models import BatchItem, Document, Draft
-from . import pendencias, retencoes
+from . import itens_lote, pendencias, retencoes
 from .common import DomainError, audit, money
 from .regras_dps import datas_issues, dominio_issues, negocio_issues
 
@@ -385,17 +385,93 @@ def get_draft(s: Session, company: CompanyInfo, draft_id: str, lock: bool = Fals
     return d
 
 
-# Situações em que o rascunho nunca entrou na fila ou foi retirado dela antes de qualquer envio.
-DELETABLE_STATUSES = ("DRAFT", "WITHDRAWN")
+# Situações em que o rascunho pode estar sem nenhum processamento fiscal: nunca entrou na fila, foi retirado dela
+# antes do envio ou teve a tentativa barrada pela validação local do conector (nada transmitido). Quem decide é o
+# histórico dos itens de emissão (avaliar_exclusao).
+DELETABLE_STATUSES = ("DRAFT", "WITHDRAWN", "REJECTED")
+_MOTIVO_STATUS = {
+    "SCHEDULED": ("DRAFT_SCHEDULED", "Rascunho agendado. Retire-o da fila (cancelar o agendamento) antes de excluir."),
+    "PROCESSING": ("DRAFT_PROCESSING", "Rascunho em processamento fiscal: aguarde o resultado; não pode ser excluído."),
+    "AWAITING_CONFIRMATION": ("DRAFT_UNCERTAIN", "Transmissão com resultado a confirmar pela reconciliação oficial: "
+                                                 "o rascunho não pode ser excluído."),
+    "AUTHORIZED": ("DRAFT_AUTHORIZED", "NFS-e emitida a partir deste rascunho: ele não pode ser excluído "
+                                       "(o cancelamento da nota é um fluxo próprio)."),
+}
+
+
+def sem_envio_comprovado(i: BatchItem) -> bool:
+    """Item encerrado com EVIDÊNCIA de que nada foi transmitido e de que não houve resultado incerto — não basta o
+    prefixo LOCAL_ dos códigos:
+    - retirado da fila: só é possível na fase NONE (o conector nunca foi chamado) e sem nota vinculada;
+    - rejeição da validação local: todos os códigos LOCAL_* (o conector barra antes do POST), sem nota vinculada e
+      UMA única chamada ao conector — pelo contador do próprio conector gravado no resultado ou, em item anterior a esse
+      registro, por uma única tentativa do item. Qualquer tentativa anterior (incerta, interrompida ou reconciliada)
+      aumenta esses contadores e impede a exclusão."""
+    if i.document_id:
+        return False
+    if i.status == "WITHDRAWN":
+        return i.submit_phase == "NONE"
+    if i.status != "REJECTED" or itens_lote.etapa(i) != "LOCAL_VALIDATION":
+        return False
+    chamadas = (i.result or {}).get("connector_transmissions")
+    return chamadas == 1 if chamadas is not None else i.attempts == 1
+
+
+def itens_por_rascunho(s: Session, company_id: str, draft_ids: list[str]) -> dict[str, list[BatchItem]]:
+    """Itens de emissão (de qualquer situação) de cada rascunho, numa consulta só."""
+    out: dict[str, list[BatchItem]] = {i: [] for i in draft_ids}
+    if draft_ids:
+        for it in s.scalars(select(BatchItem).where(BatchItem.company_id == company_id,
+                                                    BatchItem.draft_id.in_(draft_ids))):
+            out[it.draft_id].append(it)
+    return out
+
+
+def avaliar_exclusao(d: Draft, itens: list[BatchItem]) -> dict:
+    """Se o rascunho pode ser excluído e, se não, por quê — a MESMA regra que a exclusão aplica com a linha travada.
+
+    Decide pelo histórico real dos itens de emissão, não pelo simples preenchimento de current_item_id: corrigido
+    depois de uma rejeição, o rascunho volta a DRAFT e o vínculo com o item encerrado permanece como histórico (não é
+    apagado). Item retirado da fila ou barrado pela validação local antes do envio não impede; transmissão (rejeição
+    oficial ou nota emitida), fila, processamento, resultado incerto e qualquer item sem evidência completa de não
+    envio (sem_envio_comprovado) impedem."""
+    if d.deleted_at is not None:
+        return {"allowed": False, "reason_code": "DRAFT_DELETED", "reason": "Rascunho já excluído."}
+    if d.status not in DELETABLE_STATUSES:
+        code, msg = _MOTIVO_STATUS.get(d.status, ("DRAFT_LOCKED", f"Rascunho em {d.status} não pode ser excluído."))
+        return {"allowed": False, "reason_code": code, "reason": msg}
+    etapas = {itens_lote.etapa(i) for i in itens if not sem_envio_comprovado(i)}
+    if d.current_item_id and d.current_item_id not in {i.id for i in itens}:
+        etapas.add("UNKNOWN")  # vínculo sem item conhecido: na dúvida, não exclui
+    if not etapas:
+        return {"allowed": True, "reason_code": None, "reason": None}
+    if "AUTHORIZED" in etapas:
+        code, msg = _MOTIVO_STATUS["AUTHORIZED"]
+    elif "OFFICIAL_REJECTION" in etapas:
+        code, msg = ("DRAFT_TRANSMITTED", "Rascunho com histórico de transmissão: uma DPS dele foi transmitida e "
+                                          "rejeitada pela Sefin. O histórico de emissão é preservado e o rascunho "
+                                          "não pode ser excluído; corrija-o e emita de novo.")
+    elif etapas & {"SENDING", "UNCERTAIN"}:
+        code, msg = _MOTIVO_STATUS["AWAITING_CONFIRMATION"]
+    elif etapas & {"QUEUED", "BLOCKED_BEFORE_SEND"}:
+        code, msg = _MOTIVO_STATUS["SCHEDULED"]
+    elif etapas & {"LOCAL_VALIDATION", "WITHDRAWN"}:
+        code, msg = ("DRAFT_SEND_UNPROVEN", "Rascunho com tentativa de emissão sem comprovação completa de que nada "
+                                            "foi transmitido (mais de uma tentativa ou envio registrado): não pode ser "
+                                            "excluído. O histórico de emissão é preservado.")
+    else:
+        code, msg = ("DRAFT_HAS_SUBMISSION", "Rascunho vinculado a processamento fiscal: não pode ser excluído.")
+    return {"allowed": False, "reason_code": code, "reason": msg}
 
 
 def delete_draft(s: Session, company: CompanyInfo, draft_id: str, *, expected_version: int, user_id: str,
                  now: datetime, trace_id: str | None) -> tuple[Draft, bool]:
     """Exclusão LÓGICA, na mesma transação e com a linha travada (FOR UPDATE) — a mesma trava usada por editar, emitir
     agora e agendar, que passam a recusar o rascunho excluído. Permitida só sem transmissão e sem vínculo com
-    processamento fiscal: nenhum item de fila ativo, enviado, incerto, emitido ou rejeitado (um item retirado da fila
-    antes do envio não conta). Repetir a exclusão devolve o mesmo resultado (idempotente). Notas, XMLs, eventos, jobs e
-    documentos de referência não são tocados. Devolve (rascunho, excluído_agora)."""
+    processamento fiscal (avaliar_exclusao): nenhum item de fila ativo, enviado, incerto, emitido ou rejeitado pela
+    Sefin (item retirado da fila ou barrado pela validação local antes do envio não conta). Vínculos e itens são
+    preservados. Repetir a exclusão devolve o mesmo resultado (idempotente). Notas, XMLs, eventos, jobs e documentos de
+    referência não são tocados. Devolve (rascunho, excluído_agora)."""
     d = s.scalar(select(Draft).where(Draft.id == draft_id, Draft.company_id == company.id).with_for_update())
     if d is None:  # inclusive de outro workspace: nada é revelado
         raise DomainError(404, "DRAFT_NOT_FOUND", "Rascunho não encontrado.")
@@ -403,25 +479,23 @@ def delete_draft(s: Session, company: CompanyInfo, draft_id: str, *, expected_ve
         return d, False
     if d.version != expected_version:
         raise DomainError(409, "VERSION_CONFLICT", "Rascunho alterado por outra pessoa. Recarregue antes de excluir.")
-    if d.status not in DELETABLE_STATUSES or d.current_item_id:
-        dica = (" Retire-o da fila (cancelar o agendamento) antes de excluir." if d.status == "SCHEDULED" else "")
-        raise DomainError(409, "DRAFT_NOT_DELETABLE",
-                          f"Rascunho em {d.status} não pode ser excluído: já entrou no processamento fiscal "
-                          f"(agendado, em fila, em transmissão, com resultado a confirmar ou emitido).{dica}")
-    vinculos = s.scalars(select(BatchItem).where(BatchItem.draft_id == d.id, BatchItem.company_id == company.id,
-                                                 BatchItem.status != "WITHDRAWN")).all()
-    if vinculos:
-        raise DomainError(409, "DRAFT_NOT_DELETABLE",
-                          "Rascunho vinculado a processamento fiscal (transmissão ou submissão registrada): não pode "
-                          "ser excluído. O histórico de emissão é preservado.",
-                          [{"field": "draft_id", "code": "DRAFT_HAS_SUBMISSION",
-                            "message": f"{len(vinculos)} item(ns) de emissão em {sorted({i.status for i in vinculos})}."}])
+    itens = itens_por_rascunho(s, company.id, [d.id])[d.id]
+    ex = avaliar_exclusao(d, itens)
+    if not ex["allowed"]:
+        raise DomainError(409, "DRAFT_NOT_DELETABLE", ex["reason"],
+                          [{"field": "draft_id", "code": ex["reason_code"],
+                            "message": f"{len(itens)} item(ns) de emissão em {sorted({i.status for i in itens})}."}])
     d.deleted_at, d.deleted_by = now, user_id
     d.version += 1
     d.updated_at = now
     audit(s, now, "draft.deleted", company_id=d.company_id, actor_id=user_id, target_type="draft", target_id=d.id,
           details={"version": d.version, "status": d.status, "customer_id": d.customer_id, "amount": str(d.amount),
-                   "source_document_id": d.source_document_id, "logical": True}, trace_id=trace_id)
+                   "source_document_id": d.source_document_id, "logical": True,
+                   "items": [{"id": i.id, "status": i.status, "stage": itens_lote.etapa(i), "attempts": i.attempts,
+                              "submit_phase": i.submit_phase,
+                              "connector_transmissions": (i.result or {}).get("connector_transmissions")}
+                             for i in itens]},
+          trace_id=trace_id)
     return d, True
 
 
@@ -929,7 +1003,10 @@ def retention_summary(d: Draft) -> dict:
     return retencoes.resumo(d.amount, d.discount_unconditional, d.discount_conditional, d.deductions, d.tax_settings)
 
 
-def draft_out(d: Draft) -> dict:
+def draft_out(d: Draft, deletion: dict | None = None) -> dict:
+    """deletion: resultado de avaliar_exclusao já calculado (listas calculam em lote); sem ele, calcula aqui."""
+    if deletion is None and (s := object_session(d)) is not None:
+        deletion = avaliar_exclusao(d, itens_por_rascunho(s, d.company_id, [d.id])[d.id])
     return {
         "id": d.id,
         "customer_id": d.customer_id,
@@ -963,6 +1040,7 @@ def draft_out(d: Draft) -> dict:
         "editable": d.status in EDITABLE_STATUSES,
         "environment": d.environment,
         "current_item_id": d.current_item_id,
+        "deletion": deletion,
         "created_at": d.created_at,
         "updated_at": d.updated_at,
     }

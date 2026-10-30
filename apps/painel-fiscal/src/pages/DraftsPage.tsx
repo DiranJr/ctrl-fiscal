@@ -11,6 +11,7 @@ import { useFiscal, logSafe } from '../context/FiscalContext.js';
 import { PendenciasRascunho } from '../components/PendenciasRascunho.js';
 import { normalizarPercentual, trocaDeUnidade } from '../components/tributosAproximados.js';
 import { conflitoPrestacao, dataBr, diaNoFuso, sugestaoAgendamento } from '../components/datasEmissao.js';
+import { motivoNaoExcluir } from '../components/exclusaoRascunho.js';
 import { useUnsavedChanges } from '@ctrl-fiscal/ui';
 import {
   Table,
@@ -108,8 +109,6 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
   const [editValidateError, setEditValidateError] = useState<string | null>(null);
   const editorRef = React.useRef<HTMLDivElement | null>(null);
   const canPrepare = !!currentCompany?.permissions?.includes('prepare');
-  // Só o que nunca entrou na fila (ou foi retirado antes do envio); o servidor confere de novo, com trava.
-  const isDeletable = (d: Draft) => (d.status === 'DRAFT' || d.status === 'WITHDRAWN') && !d.current_item_id;
 
   // Validação
   const [validatingDraftId, setValidatingDraftId] = useState<string | null>(null);
@@ -500,6 +499,32 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
   const handleAskDelete = (draft: Draft) => {
     setDeleteError(null);
     setDeletingDraft(draft);
+  };
+
+  // Excluir fica sempre à vista; com impedimento (servidor ou permissão), desabilitado e com o motivo — no título, no
+  // nome acessível e, ao clicar, num aviso. aria-disabled (e não disabled) para o motivo aparecer também no toque.
+  const botaoExcluir = (d: Draft, noEditor = false) => {
+    const motivo = motivoNaoExcluir(d, canPrepare);
+    const nome = d.customer?.name || 'tomador';
+    return (
+      <Button
+        size={noEditor ? 'md' : 'sm'}
+        variant={noEditor ? 'danger' : 'ghost'}
+        aria-disabled={motivo ? true : undefined}
+        data-excluir={motivo ? 'indisponivel' : 'disponivel'}
+        title={motivo ? `Excluir indisponível: ${motivo}` : 'Excluir este rascunho (pede confirmação)'}
+        aria-label={motivo ? `Excluir rascunho de ${nome} — indisponível: ${motivo}` : `Excluir rascunho de ${nome}`}
+        style={motivo ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}
+        disabled={noEditor && isSavingEdit}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (motivo) showToast(`Não é possível excluir: ${motivo}`, 'warning');
+          else handleAskDelete(d);
+        }}
+      >
+        🗑️ {noEditor ? 'Excluir rascunho' : 'Excluir'}
+      </Button>
+    );
   };
 
   const handleConfirmDelete = async () => {
@@ -1062,6 +1087,7 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
               >
                 ↩️ Retirar da fila para editar
               </Button>
+              {botaoExcluir(d)}
             </div>
           );
         }
@@ -1072,21 +1098,24 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
               <Button size="sm" variant="outline" title="Abrir a NFS-e emitida" onClick={(e) => { e.stopPropagation(); verNota(d); }}>
                 Ver nota
               </Button>
+              {botaoExcluir(d)}
             </div>
           );
         }
         if (d.status === 'PROCESSING' || d.status === 'AWAITING_CONFIRMATION') {
           return (
-            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', justifyContent: 'flex-end' }}>
               <span className="pf-help" style={{ textAlign: 'right' }}>
                 {d.status === 'PROCESSING' ? 'Em processamento — aguarde.' : 'Aguardando a reconciliação oficial — não reenvie.'}
               </span>
+              {botaoExcluir(d)}
             </div>
           );
         }
         if (!isEditable) {
           return (
             <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+              {botaoExcluir(d)}
               <span
                 style={{
                   fontSize: '0.75rem',
@@ -1141,20 +1170,7 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
             >
               ✏️ Editar
             </Button>
-            {canPrepare && isDeletable(d) && (
-              <Button
-                size="sm"
-                variant="ghost"
-                title="Excluir este rascunho (pede confirmação)"
-                aria-label={`Excluir rascunho de ${d.customer?.name || 'tomador'}`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleAskDelete(d);
-                }}
-              >
-                🗑️ Excluir
-              </Button>
-            )}
+            {botaoExcluir(d)}
           </div>
         );
       },
@@ -1235,13 +1251,12 @@ export const DraftsPage: React.FC<{ onNavigate: (route: string) => void }> = ({ 
             <div className="pf-actions-row" style={{ width: '100%' }}>
               <div className="pf-help">
                 Versão esperada: <strong>v{editingDraft.version}</strong>
+                {motivoNaoExcluir(editingDraft, canPrepare) && (
+                  <div data-testid="motivo-excluir">Excluir indisponível: {motivoNaoExcluir(editingDraft, canPrepare)}</div>
+                )}
               </div>
               <div className="pf-actions-end">
-                {canPrepare && isDeletable(editingDraft) && (
-                  <Button variant="danger" onClick={() => handleAskDelete(editingDraft)} disabled={isSavingEdit}>
-                    🗑️ Excluir rascunho
-                  </Button>
-                )}
+                {botaoExcluir(editingDraft, true)}
                 <Button variant="outline" onClick={closeEditor} disabled={isSavingEdit}>
                   Cancelar
                 </Button>

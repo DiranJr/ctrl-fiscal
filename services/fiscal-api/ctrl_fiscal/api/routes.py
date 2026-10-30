@@ -405,7 +405,9 @@ def list_drafts(
     total = s.scalar(select(func.count()).select_from(q.subquery()))
     rows = s.scalars(q.order_by(Draft.updated_at.desc(), Draft.id).offset(pp.offset).limit(pp.page_size)).all()
     notas = cl.issued_documents(s, rows)
-    return {"items": [{**drafts_d.draft_out(d), "issued": notas.get(d.id)} for d in rows], "page": pp.page,
+    itens = drafts_d.itens_por_rascunho(s, cc.company.id, [d.id for d in rows])
+    return {"items": [{**drafts_d.draft_out(d, drafts_d.avaliar_exclusao(d, itens[d.id])), "issued": notas.get(d.id)}
+                      for d in rows], "page": pp.page,
             "page_size": pp.page_size, "total": total, "view": view,
             "counts": cl.draft_counts(s, cc.company.id, cc.company.environment)}
 

@@ -320,7 +320,12 @@ def _finish(sessions: sessionmaker, clock: Clock, owner: str, it: LeasedItem, re
             final = "AUTHORIZED"
         elif state == "REJECTED":
             errs = [{"code": str(e.get("code"))[:60], "message": str(e.get("message"))[:300]} for e in (resp.get("errors") or [])][:20]
-            _apply(item, status="REJECTED", finished_at=now, result={"errors": errs, "simulated": bool(resp.get("simulated"))},
+            # connector_transmissions: chamadas de envio registradas pelo conector para esta submissão (cada tentativa,
+            # inclusive incerta ou interrompida, conta). É a evidência usada para provar que nada foi transmitido.
+            chamadas = resp.get("transmissions")
+            _apply(item, status="REJECTED", finished_at=now, result={
+                       "errors": errs, "simulated": bool(resp.get("simulated")),
+                       "connector_transmissions": chamadas if isinstance(chamadas, int) else None},
                    last_error_code="REJECTED", last_error_message="Rejeição confirmada; corrija o rascunho.", **common)
             if own_draft:
                 draft.status = "REJECTED"

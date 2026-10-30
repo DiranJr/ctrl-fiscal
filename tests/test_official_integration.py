@@ -686,6 +686,10 @@ def test_paliq_e0617_e0619_by_incidence_convenio_at_transmission(ostack, real, g
     item = batch_items(ostack, real, b["batch_id"])[0]
     assert item["status"] == "REJECTED" and item["result"]["errors"][0]["code"] == "LOCAL_E0617" and gov.posts() == []
     assert "Nada foi transmitido" in item["result"]["errors"][0]["message"]
+    # Evidência de não envio gravada pelo worker: UMA chamada ao conector, barrada antes do POST => pode excluir.
+    assert item["result"]["connector_transmissions"] == 1
+    rd = ostack.fiscal.get(f"{F}/{real['id']}/drafts/{d['id']}", headers=real["h"]).json()
+    assert rd["deletion"]["allowed"] is True, rd["deletion"]
     assert any(c[0] == "param" and c[3] == f"/parametrizacao/{MUN}/convenio" for c in gov.calls)
     # Agendado com convênio ATIVO sem pAliq; INATIVO na hora do envio => LOCAL_E0619, sem POST.
     parametrizacao_iss._cache.clear()

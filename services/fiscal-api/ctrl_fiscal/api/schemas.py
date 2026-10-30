@@ -488,6 +488,15 @@ class RetentionPreviewOut(BaseModel):
     issues: list[Issue] = Field(description="Inconsistências de retenção (mesmas regras da validação do rascunho).")
 
 
+class DraftDeletion(BaseModel):
+    allowed: bool = Field(description="true quando DELETE /drafts/{id} seria aceito agora (o servidor confere de novo, "
+                                      "com a linha travada).")
+    reason_code: str | None = Field(None, description="DRAFT_SCHEDULED | DRAFT_PROCESSING | DRAFT_UNCERTAIN | "
+                                                      "DRAFT_AUTHORIZED | DRAFT_TRANSMITTED | DRAFT_HAS_SUBMISSION | "
+                                                      "DRAFT_LOCKED | DRAFT_DELETED")
+    reason: str | None = Field(None, description="Motivo do impedimento, para exibir junto à ação desabilitada.")
+
+
 class DraftOut(BaseModel):
     id: str
     customer_id: str
@@ -514,7 +523,10 @@ class DraftOut(BaseModel):
     validation: DraftValidation
     editable: bool = Field(description="true em DRAFT/REJECTED; SCHEDULED exige retirada da fila (POST withdraw).")
     environment: Environment
-    current_item_id: str | None
+    current_item_id: str | None = Field(description="Último item de emissão vinculado; pode ser histórico (item "
+                                                    "encerrado). Para excluir, use deletion.")
+    deletion: DraftDeletion | None = Field(None, description="Se o rascunho pode ser excluído e o motivo quando não "
+                                                             "pode, pelo histórico real dos itens de emissão.")
     created_at: datetime
     updated_at: datetime
     issued: dict[str, Any] | None = Field(None, description="Rascunho emitido: nota (document_id, número, chave) e a situação ATUAL — AUTHORIZED, CANCELLED ou SUBSTITUTED.")

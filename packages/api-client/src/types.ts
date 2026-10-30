@@ -816,6 +816,13 @@ export interface DraftValidation {
 
 /** Resultado de "Excluir rascunho" (exclusão lógica; repetir devolve o mesmo resultado). */
 export interface DraftDeleted { id: string; deleted: boolean; deleted_at: string; version: number; already_deleted: boolean }
+/** Se o rascunho pode ser excluído agora e, se não, o motivo (pelo histórico real dos itens de emissão). */
+export interface DraftDeletion {
+  allowed: boolean;
+  /** DRAFT_SCHEDULED | DRAFT_PROCESSING | DRAFT_UNCERTAIN | DRAFT_AUTHORIZED | DRAFT_TRANSMITTED | DRAFT_HAS_SUBMISSION | DRAFT_LOCKED | DRAFT_DELETED */
+  reason_code?: string | null;
+  reason?: string | null;
+}
 export interface Draft {
   id: string;
   customer_id: string;
@@ -842,7 +849,9 @@ export interface Draft {
   validation?: DraftValidation;
   editable?: boolean;
   environment?: 'mock' | 'restricted' | 'production' | string;
+  /** Último item de emissão vinculado; pode ser histórico (item encerrado). Para excluir, use `deletion`. */
   current_item_id?: string | null;
+  deletion?: DraftDeletion | null;
   /** Rascunho emitido: nota e situação atual. */
   issued?: DraftIssued | null;
   created_at: string;
