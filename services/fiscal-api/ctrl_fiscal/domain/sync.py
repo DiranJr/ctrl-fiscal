@@ -76,6 +76,15 @@ def disable_absent(s: Session, active: set[tuple[str, str]], now: datetime) -> i
             sched.last_error_code = INACTIVE_CODE
             sched.last_error_message = "Empresa desativada ou ambiente não habilitado para leitura: agenda suspensa."
             sched.updated_at = now
+            # Pedido manual ainda na fila desta agenda não rodaria mais: encerrado com o motivo (cursor intacto).
+            job = s.get(Job, sched.pending_job_id) if sched.pending_job_id else None
+            if job is not None and job.status == "QUEUED":
+                from .jobs import _add_error  # noqa: PLC0415
+
+                _add_error(s, job, None, INACTIVE_CODE, sched.last_error_message, 1000)
+                job.status = "FAILED"
+                job.finished_at = now
+            sched.pending_job_id = None
             n += 1
     return n
 

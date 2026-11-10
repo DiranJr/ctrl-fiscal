@@ -55,6 +55,9 @@ import {
   Workspace,
   WorkspaceCreateRequest,
   WorkspaceCreated,
+  WorkspaceEnvironment,
+  WorkspaceEnvironmentChange,
+  EnvironmentImpact,
   Readiness,
   ServiceProfile,
   ServiceProfileInput,
@@ -112,6 +115,8 @@ export interface ICoreApiClient {
   createWorkspace(req: WorkspaceCreateRequest): Promise<WorkspaceCreated>;
   /** Ativar/suspender (somente SUPER_ADMIN). */
   updateWorkspace(workspaceId: string, req: { name?: string; status?: string }): Promise<Workspace>;
+  getWorkspaceEnvironment(companyId: string): Promise<WorkspaceEnvironment>;
+  changeWorkspaceEnvironment(companyId: string, req: WorkspaceEnvironmentChange): Promise<WorkspaceEnvironment>;
   revokeUserSessions(userId: string): Promise<AdminUser>;
   /** Link de ativação/redefinição (exibir uma única vez; nunca armazenar nem registrar em log). */
   issueCredentialLink(userId: string): Promise<CredentialLink>;
@@ -154,6 +159,7 @@ export interface IFiscalApiClient {
   getBatch(companyId: string, batchId: string): Promise<Batch>;
   cancelBatchPending(companyId: string, batchId: string): Promise<CancelPendingOut>;
   getSyncStatus(companyId: string, environment?: string): Promise<SyncStatus>;
+  getEnvironmentImpact(companyId: string, target?: string): Promise<EnvironmentImpact>;
   triggerSync(companyId: string, idempotencyKey: string, environment?: string): Promise<SyncRunResponse>;
   getJobStatus(companyId: string, jobId: string): Promise<JobStatusResponse>;
   exportDocuments(companyId: string, filter: DocumentFilter, format: 'xlsx'): Promise<{ job_id: string; status: 'QUEUED' }>;
@@ -680,6 +686,17 @@ export class HttpCoreApiClient implements ICoreApiClient {
   async updateWorkspace(workspaceId: string, req: { name?: string; status?: string }): Promise<Workspace> {
     return this.request<Workspace>(`/admin/workspaces/${encodeURIComponent(workspaceId)}`, {
       method: 'PATCH',
+      body: JSON.stringify(req),
+    });
+  }
+
+  async getWorkspaceEnvironment(companyId: string): Promise<WorkspaceEnvironment> {
+    return this.request<WorkspaceEnvironment>(`/companies/${encodeURIComponent(companyId)}/environment`);
+  }
+
+  async changeWorkspaceEnvironment(companyId: string, req: WorkspaceEnvironmentChange): Promise<WorkspaceEnvironment> {
+    return this.request<WorkspaceEnvironment>(`/companies/${encodeURIComponent(companyId)}/environment`, {
+      method: 'POST',
       body: JSON.stringify(req),
     });
   }
@@ -1280,6 +1297,11 @@ export class HttpFiscalApiClient implements IFiscalApiClient {
   async getSyncStatus(companyId: string, environment?: string): Promise<SyncStatus> {
     const qs = environment ? `?environment=${encodeURIComponent(environment)}` : '';
     return this.request<SyncStatus>(companyId, `/sync/status${qs}`);
+  }
+
+  async getEnvironmentImpact(companyId: string, target?: string): Promise<EnvironmentImpact> {
+    const qs = target ? `?target=${encodeURIComponent(target)}` : '';
+    return this.request<EnvironmentImpact>(companyId, `/environment-impact${qs}`);
   }
 
   async triggerSync(companyId: string, idempotencyKey: string, environment?: string): Promise<SyncRunResponse> {

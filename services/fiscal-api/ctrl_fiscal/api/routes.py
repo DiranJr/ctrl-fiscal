@@ -591,6 +591,17 @@ def cancel_pending(batch_id: str, request: Request, cc: CompanyCtx = Depends(com
     return out
 
 
+# ---------------------------------------------------------------- troca de ambiente (impacto, somente leitura)
+@router.get("/environment-impact", responses=E, tags=["sync"],
+            summary="O que existe em cada ambiente deste workspace e o que acontece com o que estiver em andamento se o "
+                    "ambiente mudar. Somente leitura; a troca é feita no core.")
+def environment_impact(target: str | None = Query(None, pattern="^(production|restricted)$"),
+                       cc: CompanyCtx = Depends(company_ctx("admin")), s: Session = Depends(db_session)) -> dict:
+    from ..domain import ambiente  # noqa: PLC0415
+
+    return ambiente.impacto(s, cc.company.id, cc.company.environment, target)
+
+
 # ---------------------------------------------------------------- sincronização
 @router.get("/sync/status", response_model=sc.SyncStatus, responses=E, tags=["sync"])
 def sync_status(request: Request, environment: str | None = EnvQuery, cc: CompanyCtx = Depends(company_ctx("view")),

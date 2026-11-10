@@ -1275,6 +1275,58 @@ export interface AdminCompany {
   cnpj: string;
 }
 
+/** Pendência de um ambiente: global = configuração da instalação; empresa = deste workspace (ex.: certificado). */
+export interface EnvironmentIssue { code: string; message: string }
+export interface WorkspaceEnvironmentOption {
+  environment: 'production' | 'restricted';
+  label: string;
+  /** A instalação permite usar o ambiente (leitura ou emissão habilitada na configuração). */
+  available: boolean;
+  /** Leitura ADN possível para este workspace (instalação + certificado do CNPJ). */
+  read_available: boolean;
+  global_issues: EnvironmentIssue[];
+  company_issues: EnvironmentIssue[];
+  /** Só informação: emissão/cancelamento dependem também do workspace ativo e de perfis aprovados. */
+  installation: { distribution?: boolean; emission?: boolean; cancellation?: boolean };
+  certificate: { present?: boolean; subject_cnpj_matches?: boolean; not_after?: string | null };
+}
+/** GET/POST /companies/{id}/environment (core). */
+export interface WorkspaceEnvironment {
+  company_id: string;
+  cnpj: string;
+  environment: string;
+  adn_environments: string[];
+  options: WorkspaceEnvironmentOption[];
+  note: string;
+  changed?: boolean;
+  previous?: { environment: string; adn_environments: string[] };
+}
+export interface WorkspaceEnvironmentChange {
+  environment: 'production' | 'restricted';
+  adn_read: boolean;
+  confirmation: { company_id: string; cnpj: string; from_environment: string; to_environment: 'production' | 'restricted' };
+}
+/** GET /environment-impact (fiscal): o que existe por ambiente e o que acontece na troca (somente leitura). */
+export interface EnvironmentImpactRow {
+  environment: string;
+  current: boolean;
+  target: boolean;
+  documents: number;
+  drafts: number;
+  scheduled_not_started: number;
+  in_flight: number;
+  active_cancellations: number;
+  active_jobs: number;
+  sync: { enabled: boolean; status: string; cursor_nsu: number; last_success_at?: string | null } | null;
+}
+export interface EnvironmentImpact {
+  company_id: string;
+  current_environment: string;
+  target_environment: string | null;
+  environments: EnvironmentImpactRow[];
+  on_switch: string[];
+}
+
 /** Nome para exibir (seletor, títulos e listas): o do workspace; a razão social quando não houver. */
 export function nomeExibicao(c: { name: string; display_name?: string | null } | null | undefined): string {
   return (c?.display_name || c?.name || '').trim();

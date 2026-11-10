@@ -54,6 +54,9 @@ import {
   Workspace,
   WorkspaceCreateRequest,
   WorkspaceCreated,
+  WorkspaceEnvironment,
+  WorkspaceEnvironmentChange,
+  EnvironmentImpact,
   Readiness,
   ServiceProfile,
   ServiceProfileInput,
@@ -586,6 +589,16 @@ export class MockCoreApiClient implements ICoreApiClient {
   async updateWorkspace(_workspaceId: string, _req: { name?: string; status?: string }): Promise<Workspace> {
     throw new ProblemDetailsException({ type: 'about:blank', title: 'Indisponível', status: 501,
       detail: 'Não disponível no modo de demonstração.' });
+  }
+
+  async getWorkspaceEnvironment(_companyId: string): Promise<WorkspaceEnvironment> {
+    throw new ProblemDetailsException({ type: 'about:blank', title: 'Indisponível', status: 501,
+      detail: 'Ambientes oficiais não disponíveis no modo de demonstração.' });
+  }
+
+  async changeWorkspaceEnvironment(_companyId: string, _req: WorkspaceEnvironmentChange): Promise<WorkspaceEnvironment> {
+    throw new ProblemDetailsException({ type: 'about:blank', title: 'Indisponível', status: 501,
+      detail: 'Ambientes oficiais não disponíveis no modo de demonstração.' });
   }
 
   async setSuperAdmin(userId: string, enabled: boolean): Promise<AdminUser> {
@@ -1334,6 +1347,11 @@ export class MockFiscalApiClient implements IFiscalApiClient {
       not_withdrawn: 0,
       cancelled_count: count,
     };
+  }
+
+  async getEnvironmentImpact(companyId: string, target?: string): Promise<EnvironmentImpact> {
+    return { company_id: companyId, current_environment: 'mock', target_environment: target || null, environments: [],
+      on_switch: [] };
   }
 
   async getSyncStatus(companyId: string, environment?: string): Promise<SyncStatus> {

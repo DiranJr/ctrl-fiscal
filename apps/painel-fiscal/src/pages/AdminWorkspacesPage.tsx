@@ -5,6 +5,7 @@ import { useFiscal, logSafe } from '../context/FiscalContext.js';
 import { ScreenSection, TableEmpty } from '../components/screen/ScreenSection.js';
 import { Notice } from '../components/screen/Notice.js';
 import { CredentialLinkModal } from '../components/admin/CredentialLinkModal.js';
+import { AmbienteWorkspaceModal } from '../components/admin/AmbienteWorkspaceModal.js';
 
 /** Administração → Workspaces. Criar: SUPER_ADMIN ou permissão create_workspace (conferida no servidor a cada
  * criação). Ativar/suspender: só SUPER_ADMIN. Renomear (só o nome de exibição): SUPER_ADMIN ou administrador do
@@ -37,9 +38,11 @@ export function cnpjValido(v: string): boolean {
 type Adm = 'nenhum' | 'existente' | 'novo';
 
 export const AdminWorkspacesPage: React.FC = () => {
-  const { user, clients, showToast, refreshMe } = useFiscal();
+  const { user, clients, showToast, refreshMe, currentCompany } = useFiscal();
   const isSuper = !!user?.is_super_admin;
-  const podeRenomear = (w: Workspace) => isSuper || !!user?.admin_company_ids?.includes(w.id);
+  const adminDoWorkspace = (w: Workspace) => !!user?.admin_company_ids?.includes(w.id);
+  const podeRenomear = (w: Workspace) => isSuper || adminDoWorkspace(w);
+  const [ambienteDe, setAmbienteDe] = useState<Workspace | null>(null);
   const podeCriar = isSuper || !!user?.can_create_workspace;
   const [itens, setItens] = useState<Workspace[]>([]);
   const [carregando, setCarregando] = useState(false);
@@ -222,6 +225,10 @@ export const AdminWorkspacesPage: React.FC = () => {
                       <Button size="sm" variant="outline" onClick={() => abrirRenomear(w)}
                         aria-label={`Renomear o workspace ${w.name}`}>Renomear</Button>
                     )}
+                    {adminDoWorkspace(w) && (
+                      <Button size="sm" variant="outline" onClick={() => setAmbienteDe(w)}
+                        aria-label={`Ambiente e leitura ADN do workspace ${w.name}`}>Ambiente e leitura ADN</Button>
+                    )}
                     {isSuper && w.status !== 'ACTIVE' && (
                       <Button size="sm" variant="outline" isLoading={mudando === w.id} onClick={() => mudarSituacao(w, 'ACTIVE')}>Ativar</Button>
                     )}
@@ -324,6 +331,13 @@ export const AdminWorkspacesPage: React.FC = () => {
           </form>
         )}
       </Modal>
+      <AmbienteWorkspaceModal workspace={ambienteDe} onClose={() => setAmbienteDe(null)} onChanged={async () => {
+        const mudouOAtual = ambienteDe?.id === currentCompany?.id;
+        setAmbienteDe(null);
+        // Workspace em uso: recarrega o painel inteiro (contadores, listas e selo de ambiente do novo ambiente).
+        if (mudouOAtual) window.location.reload();
+        else await Promise.all([carregar(), refreshMe()]);
+      }} />
       <CredentialLinkModal link={linkAberto ? criado?.credential_link || null : null} personName={novoNome || 'administrador'}
         onClose={() => setLinkAberto(false)} />
     </ScreenSection>

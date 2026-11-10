@@ -165,6 +165,9 @@ def create_app(settings: CoreSettings, clock: Clock | None = None, nfse_http: ht
     from .routes_workspaces import router as workspaces_router
 
     app.include_router(workspaces_router, prefix=API_PREFIX)
+    from .routes_ambiente import router as ambiente_router
+
+    app.include_router(ambiente_router, prefix=API_PREFIX)
     from .routes_perfis import internal as perfis_internal, router as perfis_router
 
     app.include_router(perfis_router, prefix=API_PREFIX)

@@ -72,6 +72,12 @@ def core_authorizer(core, sessions: sessionmaker | None = None) -> Authorizer:  
             return None
         if authz is None or EMIT_PERMISSION not in (authz.get("permissions") or []):
             return False
+        if authz.get("environment") and authz.get("environment") != it.environment:
+            # Ambiente do workspace trocado depois do agendamento (qualquer ambiente): não iniciado => retirado, nada
+            # transmitido; com envio possível, o fluxo só reconcilia no ambiente original (nunca reenvia).
+            return {"state": "AUTH_REVOKED", "error": {"code": "ENVIRONMENT_CHANGED", "message": (
+                "O ambiente do workspace mudou depois do agendamento. Nada foi transmitido; agende de novo no "
+                "ambiente atual, se ainda for o caso.")}}
         if it.environment == "production":
             return _contexto_producao(core, sessions, it, authz)
         return True
