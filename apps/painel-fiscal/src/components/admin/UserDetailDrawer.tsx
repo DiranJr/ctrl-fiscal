@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Button, Drawer, ErrorState, Input, Modal, Select, Skeleton } from '@ctrl-fiscal/ui';
 import type { AdminCompany, AdminMeta, AdminUser, CredentialLink } from '@ctrl-fiscal/api-client';
+import { nomeExibicao } from '@ctrl-fiscal/api-client';
 import { useFiscal, logSafe } from '../../context/FiscalContext.js';
 import {
   PermissionCheckboxes,
@@ -381,7 +382,7 @@ export const UserDetailDrawer: React.FC<{
                 <div style={{ border: '1px dashed var(--color-border-hover)', borderRadius: 'var(--radius-md)', padding: '0.75rem',
                   display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                   <Select label="Vincular a outra empresa" value={addTarget} onChange={(e) => setAddCompany(e.target.value)}
-                    options={addable.map((c) => ({ value: c.id, label: `${c.name} (${c.cnpj})` }))} disabled={!!busy} />
+                    options={addable.map((c) => ({ value: c.id, label: `${nomeExibicao(c)} (${c.cnpj})` }))} disabled={!!busy} />
                   <PermissionCheckboxes meta={meta} idPrefix="pf-perm-new" legend={`Permissões na nova empresa ${addTargetName}`}
                     value={addPerms} onChange={setAddPerms} disabled={!!busy} />
                   <div>

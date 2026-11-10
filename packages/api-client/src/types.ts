@@ -202,7 +202,10 @@ export interface CertificateStatus {
 
 export interface Company {
   id: string;
+  /** Razão social (dado fiscal: prestador, DPS, cancelamento). */
   name: string;
+  /** Nome de exibição do workspace (seletor e títulos); a razão social quando ausente. */
+  display_name?: string;
   cnpj: string;
   timezone: string;
   environment?: 'mock' | 'restricted' | 'production' | string;
@@ -1267,7 +1270,14 @@ export interface AdminMeta {
 export interface AdminCompany {
   id: string;
   name: string;
+  /** Nome de exibição do workspace (a razão social, sem workspace). */
+  display_name?: string;
   cnpj: string;
+}
+
+/** Nome para exibir (seletor, títulos e listas): o do workspace; a razão social quando não houver. */
+export function nomeExibicao(c: { name: string; display_name?: string | null } | null | undefined): string {
+  return (c?.display_name || c?.name || '').trim();
 }
 
 export interface CredentialLink {

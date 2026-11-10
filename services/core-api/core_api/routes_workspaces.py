@@ -165,6 +165,7 @@ def create_workspace(body: WorkspaceCreate, request: Request, cu: CurrentUser = 
             raise ProblemError(409, "EMAIL_IN_USE", "Já existe usuário com este e-mail: escolha-o como usuário existente.",
                                errors=[{"field": "admin.new_user.email", "code": "EMAIL_IN_USE",
                                         "message": "E-mail já cadastrado."}])
+    nome = nome_exibicao(body.name)
     c = Company(name=body.company.name.strip(), cnpj=body.company.cnpj, timezone=body.company.timezone,
                 nfse_environment="restricted", municipality_code=body.company.municipality_code,
                 adn_environments=[], is_active=True, created_at=now, updated_at=now)
@@ -172,7 +173,7 @@ def create_workspace(body: WorkspaceCreate, request: Request, cu: CurrentUser = 
     link = None
     try:
         s.flush()
-        w = Workspace(id=c.id, company_id=c.id, name=body.name.strip(), status="PREPARING", created_by=cu.user.id,
+        w = Workspace(id=c.id, company_id=c.id, name=nome, status="PREPARING", created_by=cu.user.id,
                       created_at=now, updated_at=now)
         s.add(w)
         s.flush()
@@ -218,22 +219,51 @@ def create_workspace(body: WorkspaceCreate, request: Request, cu: CurrentUser = 
     return out
 
 
+def _vinculo(s: Session, user_id: str, company_id: str) -> Membership | None:
+    return s.scalar(select(Membership).where(Membership.user_id == user_id, Membership.company_id == company_id))
+
+
+def nome_exibicao(valor: str) -> str:
+    """Nome de exibição do workspace: espaços normalizados; 2 a 200 caracteres; sem caracteres de controle."""
+    nome = " ".join(valor.split())
+    if len(nome) < 2 or any(ord(ch) < 32 for ch in valor if ch not in " \t"):
+        raise ProblemError(422, "WORKSPACE_NAME_INVALID", "Informe o nome do workspace (mínimo de 2 caracteres).",
+                           errors=[{"field": "name", "code": "WORKSPACE_NAME_INVALID",
+                                    "message": "Nome com no mínimo 2 caracteres, sem quebras de linha."}])
+    return nome
+
+
 @router.patch("/admin/workspaces/{workspace_id}", responses=ERRS,
-              summary="Nome/situação do workspace. ACTIVE não libera emissão nem cancelamento (controles separados).")
+              summary="Nome de exibição (SUPER_ADMIN ou administrador do workspace) e situação (só SUPER_ADMIN). "
+                      "Não altera empresa, razão social, CNPJ, ambiente, certificado nem permissões. ACTIVE não libera "
+                      "emissão nem cancelamento (controles separados).")
 def patch_workspace(workspace_id: str, body: WorkspacePatch, request: Request, cu: CurrentUser = Depends(current_user),
                     s: Session = Depends(db_session)) -> dict:
-    _require_super(cu)
     w = s.scalar(select(Workspace).where(Workspace.id == workspace_id).with_for_update())
-    if w is None:
+    super_admin = bool(cu.user.is_super_admin)
+    m = _vinculo(s, cu.user.id, w.company_id) if w is not None and not super_admin else None
+    if w is None or not (super_admin or m is not None):  # sem vínculo: nada é revelado
         raise ProblemError(404, "WORKSPACE_NOT_FOUND", "Workspace não encontrado.")
-    now = ctx(request).clock.now()
+    if not super_admin and "admin" not in (m.permissions or []):
+        raise ProblemError(403, "WORKSPACE_ADMIN_REQUIRED",
+                           "Somente o administrador deste workspace (ou o SUPER_ADMIN) altera o nome de exibição.")
     changes = body.model_dump(exclude_unset=True)
-    for k, v in changes.items():
-        setattr(w, k, v.strip() if isinstance(v, str) and k == "name" else v)
-    w.updated_at = now
-    audit(s, now, "workspace.updated", actor_id=cu.user.id, company_id=w.company_id, target_type="workspace",
-          target_id=w.id, details=changes, trace_id=trace_id_for(request))
-    s.commit()
+    if "status" in changes:
+        _require_super(cu)  # ativar/suspender continua exclusivo do SUPER_ADMIN
+    if "name" in changes:
+        if changes["name"] is None:
+            raise ProblemError(422, "WORKSPACE_NAME_INVALID", "Informe o nome do workspace.",
+                               errors=[{"field": "name", "code": "WORKSPACE_NAME_INVALID", "message": "Obrigatório."}])
+        changes["name"] = nome_exibicao(changes["name"])
+    diff = {k: {"from": getattr(w, k), "to": v} for k, v in changes.items() if getattr(w, k) != v}
+    if diff:  # nada muda => nada é gravado nem auditado
+        now = ctx(request).clock.now()
+        for k, v in diff.items():
+            setattr(w, k, v["to"])
+        w.updated_at = now
+        audit(s, now, "workspace.updated", actor_id=cu.user.id, company_id=w.company_id, target_type="workspace",
+              target_id=w.id, details={**diff, "by_super_admin": super_admin}, trace_id=trace_id_for(request))
+        s.commit()
     return workspace_out(w, s.get(Company, w.company_id))
 
 

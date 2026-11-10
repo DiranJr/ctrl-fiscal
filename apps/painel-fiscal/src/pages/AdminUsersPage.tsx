@@ -12,6 +12,7 @@ import {
   useDebouncedValue,
 } from '@ctrl-fiscal/ui';
 import type { AdminCompany, AdminMeta, AdminUser, AdminUserFilter, CreateAdminUserResponse, CredentialLink } from '@ctrl-fiscal/api-client';
+import { nomeExibicao } from '@ctrl-fiscal/api-client';
 import { useFiscal, logSafe } from '../context/FiscalContext.js';
 import {
   EMPTY_ADMIN_FILTERS,
@@ -142,7 +143,7 @@ export const AdminUsersPage: React.FC = () => {
   }
 
   const permOptions = [{ value: '', label: 'Todas as permissões' }, ...meta.permissions.map((p) => ({ value: p.id, label: p.label }))];
-  const companyOptions = [{ value: '', label: 'Todas as empresas' }, ...companies.map((c) => ({ value: c.id, label: `${c.name} (${c.cnpj})` }))];
+  const companyOptions = [{ value: '', label: 'Todas as empresas' }, ...companies.map((c) => ({ value: c.id, label: `${nomeExibicao(c)} (${c.cnpj})` }))];
 
   const columns: Column<AdminUser>[] = [
     {

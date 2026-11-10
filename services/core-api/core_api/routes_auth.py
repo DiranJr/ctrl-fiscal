@@ -260,13 +260,15 @@ def me(cu: CurrentUser = Depends(current_user), s: Session = Depends(db_session)
         .where(Membership.user_id == cu.user.id, Company.is_active.is_(True))
         .order_by(Company.name)
     ).all()
+    ws = _workspaces(s, rows)
+    nomes = {w["id"]: w["name"] for w in ws}
     return MeResponse(
         id=cu.user.id,
         name=cu.user.name,
         email=cu.user.email,
         companies=[
             CompanyAccess(
-                id=co.id, name=co.name, cnpj=co.cnpj, timezone=co.timezone,
+                id=co.id, name=co.name, display_name=nomes.get(co.id) or co.name, cnpj=co.cnpj, timezone=co.timezone,
                 permissions=list(m.permissions or []), environment=co.nfse_environment,
             )
             for co, m in rows
@@ -274,7 +276,7 @@ def me(cu: CurrentUser = Depends(current_user), s: Session = Depends(db_session)
         is_super_admin=bool(cu.user.is_super_admin),
         can_create_workspace=bool(cu.user.is_super_admin or cu.user.can_create_workspace),
         admin_company_ids=[co.id for co, m in rows if "admin" in (m.permissions or [])],
-        workspaces=_workspaces(s, rows),
+        workspaces=ws,
     )
 
 

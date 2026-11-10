@@ -59,6 +59,78 @@ def test_um_workspace_por_cnpj_somente_super_admin(stack, org):
         assert s.scalar(select(AuditEvent).where(AuditEvent.action == "workspace.created")) is not None
 
 
+def _foto(stack, company_id: str) -> dict:  # noqa: ANN001
+    """Tudo o que renomear NÃO pode mudar: empresa (razão social, CNPJ, ambiente, ADN, série), situação e vínculos."""
+    from core_api.models import Company, Membership, Workspace
+
+    with stack.core_sessions() as s:
+        c = s.get(Company, company_id)
+        w = s.scalar(select(Workspace).where(Workspace.company_id == company_id))
+        ms = sorted((m.user_id, tuple(m.permissions or [])) for m in
+                    s.scalars(select(Membership).where(Membership.company_id == company_id)))
+        return {"company": (c.id, c.name, c.cnpj, c.nfse_environment, tuple(c.adn_environments or []), c.dps_series,
+                            c.municipality_code, c.is_active),
+                "workspace": (w.id, w.company_id, w.status, w.created_by), "memberships": ms}
+
+
+def test_renomear_workspace_so_o_nome_de_exibicao(stack, org):
+    from core_api.models import AuditEvent
+
+    url = f"{A}/workspaces/{org['a']}"
+    antes_a, antes_b = _foto(stack, org["a"]), _foto(stack, org["b"])
+    # Administrador do workspace renomeia o próprio workspace; espaços são normalizados.
+    r = stack.core.patch(url, headers=org["h_adm"], json={"name": "  Filial Fictícia  -  Norte "})
+    assert r.status_code == 200, r.text
+    assert r.json()["name"] == "Filial Fictícia - Norte" and r.json()["id"] == org["a"]
+    assert r.json()["company"]["name"] == "Empresa A"  # razão social preservada
+    assert _foto(stack, org["a"]) == antes_a and _foto(stack, org["b"]) == antes_b
+    # Reabrir: lista da administração, /auth/me (seletor) e lista de empresas mostram o nome novo.
+    lista = {w["id"]: w for w in stack.core.get(f"{A}/workspaces", headers=org["h_adm"]).json()}
+    assert lista[org["a"]]["name"] == "Filial Fictícia - Norte"
+    me = stack.core.get(f"{C}/auth/me", headers=org["h_adm"]).json()
+    comp = {c["id"]: c for c in me["companies"]}[org["a"]]
+    assert comp["display_name"] == "Filial Fictícia - Norte" and comp["name"] == "Empresa A"
+    assert {w["id"]: w["name"] for w in me["workspaces"]}[org["a"]] == "Filial Fictícia - Norte"
+    adm = {c["id"]: c for c in stack.core.get(f"{A}/companies", headers=org["h_root"]).json()}
+    assert adm[org["a"]]["display_name"] == "Filial Fictícia - Norte" and adm[org["b"]]["display_name"] == "Empresa B"
+    # Quem participa de B continua vendo B com o nome antigo (isolamento).
+    h_b = stack.login("so.b@ex.com")
+    assert [c["display_name"] for c in stack.core.get(f"{C}/auth/me", headers=h_b).json()["companies"]] == ["Empresa B"]
+    # Auditoria com o nome anterior e o novo; repetir o mesmo nome não grava nada.
+    assert stack.core.patch(url, headers=org["h_adm"], json={"name": "Filial Fictícia - Norte"}).status_code == 200
+    with stack.core_sessions() as s:
+        ev = s.scalars(select(AuditEvent).where(AuditEvent.action == "workspace.updated",
+                                                AuditEvent.target_id == org["a"])).all()
+    assert len(ev) == 1 and ev[0].actor_id == org["adm_a"] and ev[0].company_id == org["a"]
+    assert ev[0].details == {"name": {"from": "Empresa A", "to": "Filial Fictícia - Norte"}, "by_super_admin": False}
+
+
+def test_renomear_workspace_autorizacao_e_validacao(stack, org):
+    url_a, url_b = f"{A}/workspaces/{org['a']}", f"{A}/workspaces/{org['b']}"
+    antes = _foto(stack, org["a"])
+    h_so_a, h_so_b = stack.login("so.a@ex.com"), stack.login("so.b@ex.com")
+    r = stack.core.patch(url_a, headers=h_so_a, json={"name": "Sem permissão"})  # membro sem "admin"
+    assert r.status_code == 403 and r.json()["code"] == "WORKSPACE_ADMIN_REQUIRED"
+    assert stack.core.patch(url_a, headers=h_so_b, json={"name": "Outro workspace"}).status_code == 404  # sem vínculo
+    assert stack.core.patch(url_b, headers=org["h_adm"], json={"name": "Admin de A em B"}).status_code == 404
+    assert stack.core.patch(url_a, json={"name": "Sem login"}).status_code == 401
+    r = stack.core.patch(url_a, headers=org["h_adm"], json={"status": "SUSPENDED"})  # situação: só SUPER_ADMIN
+    assert r.status_code == 403 and r.json()["code"] == "SUPER_ADMIN_REQUIRED"
+    for ruim in ("a", "    ", "Linha\nquebrada", None):
+        r = stack.core.patch(url_a, headers=org["h_adm"], json={"name": ruim})
+        assert r.status_code == 422, (ruim, r.text)
+    r = stack.core.patch(url_a, headers=org["h_adm"], json={"name": "Válido", "company_id": org["b"]})
+    assert r.status_code == 422  # campos fora do nome/situação são recusados (não troca empresa)
+    assert _foto(stack, org["a"]) == antes
+    lista = {w["id"]: w["name"] for w in stack.core.get(f"{A}/workspaces", headers=org["h_root"]).json()}
+    assert lista == {org["a"]: "Empresa A", org["b"]: "Empresa B"}
+    # SUPER_ADMIN renomeia B (sem acesso fiscal); A não muda.
+    r = stack.core.patch(url_b, headers=org["h_root"], json={"name": "Empresa B — Filial"})
+    assert r.status_code == 200 and r.json()["name"] == "Empresa B — Filial"
+    lista = {w["id"]: w["name"] for w in stack.core.get(f"{A}/workspaces", headers=org["h_root"]).json()}
+    assert lista == {org["a"]: "Empresa A", org["b"]: "Empresa B — Filial"}
+
+
 def test_unicidade_de_workspace_no_banco(stack, org):
     from sqlalchemy.exc import IntegrityError
 
@@ -380,6 +452,9 @@ def test_migracoes_preservam_empresa_existente_e_certificados(tmp_path):
 
 def test_certificado_do_workspace_no_core_sem_segredos(secure_stack):
     st = secure_stack
+    # Instalação (relógio real) e situação no core (relógio da suíte) no MESMO instante: não vence com o calendário.
+    agora = datetime.now(timezone.utc)
+    st.clock.set(agora)
     co = cnpj("121314150001")
     cid = st.add_company("Empresa Fictícia G", co, environment="restricted")
     uid = st.add_user("g@ex.com")
@@ -388,7 +463,7 @@ def test_certificado_do_workspace_no_core_sem_segredos(secure_stack):
     url = f"{C}/companies/{cid}/certificates"
     assert st.core.get(url, headers=h).json()["status"] == "ABSENT"
     v, _ = _validator(make_crl([]))
-    _install(st, cid, co, make_cert(cnpj_value=co, crl_url=CRL_URL, days=20), v)
+    _install(st, cid, co, make_cert(cnpj_value=co, crl_url=CRL_URL, days=20, start=agora - timedelta(days=1)), v)
     out = st.core.get(url, headers=h).json()
     assert out["status"] == "EXPIRING" and out["active"]["environments"] == ["restricted"]
     assert "encrypted" not in str(out) and "pfx-teste" not in str(out)

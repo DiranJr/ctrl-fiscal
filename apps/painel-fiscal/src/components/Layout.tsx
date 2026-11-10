@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useFiscal, logSafe } from '../context/FiscalContext.js';
 import { MockBanner, Badge, Drawer, Icon } from '@ctrl-fiscal/ui';
-import { getEnvironmentBadgeConfig } from '@ctrl-fiscal/api-client';
+import { getEnvironmentBadgeConfig, nomeExibicao } from '@ctrl-fiscal/api-client';
 
 export interface LayoutProps {
   currentRoute: string;
@@ -64,11 +64,13 @@ const WorkspaceIdentity: React.FC<{ compact?: boolean }> = ({ compact = false })
         <select id={compact ? 'pf-company-select-faixa' : 'pf-company-select'} value={currentCompany.id} onChange={(e) => switchCompany(e.target.value)}
           aria-label="Workspace selecionado" className="pf-workspace-select">
           {companies.map((c) => (
-            <option key={c.id} value={c.id}>{c.name}</option>
+            <option key={c.id} value={c.id}>{nomeExibicao(c)}</option>
           ))}
         </select>
       ) : (
-        <span className="pf-workspace-name" title={currentCompany.name}>{currentCompany.name}</span>
+        <span className="pf-workspace-name" title={`${nomeExibicao(currentCompany)} — ${currentCompany.name}`}>
+          {nomeExibicao(currentCompany)}
+        </span>
       )}
       <span className="pf-workspace-meta">
         <span>CNPJ {formatCnpj(workspace?.company.cnpj || currentCompany.cnpj)}</span>

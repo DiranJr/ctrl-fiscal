@@ -199,10 +199,13 @@ def meta(sc: AdminScope = Depends(admin_scope)) -> dict:
 
 @router.get("/companies", response_model=list[AdminCompanyOut], responses=ERRS)
 def companies(sc: AdminScope = Depends(admin_scope), s: Session = Depends(db_session)) -> list[dict]:
-    q = select(Company).where(Company.is_active.is_(True)).order_by(Company.name)
+    from .models import Workspace  # noqa: PLC0415
+
+    q = (select(Company, Workspace.name).outerjoin(Workspace, Workspace.company_id == Company.id)
+         .where(Company.is_active.is_(True)).order_by(Company.name))
     if not sc.super_admin:
         q = q.where(Company.id.in_(sc.admin_companies))
-    return [{"id": c.id, "name": c.name, "cnpj": c.cnpj} for c in s.scalars(q)]
+    return [{"id": c.id, "name": c.name, "display_name": nome or c.name, "cnpj": c.cnpj} for c, nome in s.execute(q)]
 
 
 @router.get("/users", response_model=AdminUserPage, responses=ERRS)

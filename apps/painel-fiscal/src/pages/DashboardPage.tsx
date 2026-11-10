@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useFiscal, logSafe } from '../context/FiscalContext.js';
 import { Button, Badge, Icon, PageHeader, Skeleton } from '@ctrl-fiscal/ui';
+import { nomeExibicao } from '@ctrl-fiscal/api-client';
 import { ScreenSection } from '../components/screen/ScreenSection.js';
 import { Notice } from '../components/screen/Notice.js';
 
@@ -116,7 +117,7 @@ export const DashboardPage: React.FC<{ onNavigate: (route: string) => void }> = 
     <div className="pf-stack">
       <PageHeader
         title="Painel Fiscal"
-        description={<>Visão geral da emissão e conferência de NFS-e para <strong>{currentCompany?.name}</strong></>}
+        description={<>Visão geral da emissão e conferência de NFS-e para <strong>{nomeExibicao(currentCompany)}</strong></>}
         secondaryActions={
           <Button variant="outline" onClick={() => onNavigate('rascunhos')}>
             <Icon name="draft" size={16} /> Ver rascunhos

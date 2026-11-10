@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { FiscalDocument, RecipientSuggestion } from '@ctrl-fiscal/api-client';
+import { FiscalDocument, RecipientSuggestion, nomeExibicao } from '@ctrl-fiscal/api-client';
 import { Alert, Button, Icon, Modal } from '@ctrl-fiscal/ui';
 import { useFiscal, logSafe } from '../context/FiscalContext.js';
 import { DocumentsWorkspace } from '../components/documents/DocumentsWorkspace.js';
@@ -155,7 +155,7 @@ export const IssuedDocumentsPage: React.FC<{ onNavigate: (route: string) => void
     <DocumentsWorkspace
       direction="ISSUED"
       title="Notas emitidas"
-      description={<>NFS-e de serviços prestados por <strong>{currentCompany?.name}</strong></>}
+      description={<>NFS-e de serviços prestados por <strong>{nomeExibicao(currentCompany)}</strong></>}
       counterpartLabel="Tomador"
       primaryAction={<Button variant="primary" onClick={() => onNavigate('nova-nfse')}><Icon name="plus" size={16} /> Nova NFS-e</Button>}
       renderDetailExtras={(doc) => <DuplicateAction key={doc.id} doc={doc} onNavigate={onNavigate} />}

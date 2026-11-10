@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import { Card, Button } from '@ctrl-fiscal/ui';
-import { getApiClients, Company, User } from '@ctrl-fiscal/api-client';
+import { getApiClients, Company, User, nomeExibicao } from '@ctrl-fiscal/api-client';
 
 export default function SelectCompanyPage() {
   const router = useRouter();
@@ -92,9 +92,10 @@ export default function SelectCompanyPage() {
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem' }}>
                 <div>
                   <div style={{ fontSize: '1.0625rem', fontWeight: 700, color: 'var(--color-primary)' }}>
-                    {c.name}
+                    {nomeExibicao(c)}
                   </div>
                   <div style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)', marginTop: '0.25rem' }}>
+                    {nomeExibicao(c) !== c.name && <>{c.name} • </>}
                     CNPJ: <span style={{ fontFamily: 'var(--font-mono)' }}>{c.cnpj}</span> • Fuso: {c.timezone}
                   </div>
                   <div style={{ display: 'flex', gap: '0.35rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>

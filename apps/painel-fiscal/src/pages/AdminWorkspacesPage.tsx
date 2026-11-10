@@ -7,7 +7,8 @@ import { Notice } from '../components/screen/Notice.js';
 import { CredentialLinkModal } from '../components/admin/CredentialLinkModal.js';
 
 /** Administração → Workspaces. Criar: SUPER_ADMIN ou permissão create_workspace (conferida no servidor a cada
- * criação). Ativar/suspender: só SUPER_ADMIN. O workspace nasce EM PREPARAÇÃO, sem certificado nem transmissão. */
+ * criação). Ativar/suspender: só SUPER_ADMIN. Renomear (só o nome de exibição): SUPER_ADMIN ou administrador do
+ * workspace — razão social, CNPJ, ambiente, certificado e permissões não mudam. O workspace nasce EM PREPARAÇÃO. */
 const SITUACAO: Record<string, { label: string; badge: string }> = {
   PREPARING: { label: 'Em preparação', badge: 'PROCESSING' },
   ACTIVE: { label: 'Ativo', badge: 'VALID' },
@@ -36,8 +37,9 @@ export function cnpjValido(v: string): boolean {
 type Adm = 'nenhum' | 'existente' | 'novo';
 
 export const AdminWorkspacesPage: React.FC = () => {
-  const { user, clients, showToast } = useFiscal();
+  const { user, clients, showToast, refreshMe } = useFiscal();
   const isSuper = !!user?.is_super_admin;
+  const podeRenomear = (w: Workspace) => isSuper || !!user?.admin_company_ids?.includes(w.id);
   const podeCriar = isSuper || !!user?.can_create_workspace;
   const [itens, setItens] = useState<Workspace[]>([]);
   const [carregando, setCarregando] = useState(false);
@@ -57,6 +59,10 @@ export const AdminWorkspacesPage: React.FC = () => {
   const [criado, setCriado] = useState<WorkspaceCreated | null>(null);
   const [linkAberto, setLinkAberto] = useState(false);
   const [mudando, setMudando] = useState<string | null>(null);
+  const [renomeando, setRenomeando] = useState<Workspace | null>(null);
+  const [novoNomeWs, setNovoNomeWs] = useState('');
+  const [erroNome, setErroNome] = useState<string | null>(null);
+  const [salvandoNome, setSalvandoNome] = useState(false);
 
   const carregar = useCallback(async () => {
     setCarregando(true);
@@ -143,6 +149,36 @@ export const AdminWorkspacesPage: React.FC = () => {
     }
   };
 
+  const abrirRenomear = (w: Workspace) => {
+    setRenomeando(w);
+    setNovoNomeWs(w.name); // carrega o nome atual
+    setErroNome(null);
+  };
+
+  const salvarNome = async () => {
+    if (!renomeando || salvandoNome) return;
+    const nomeLimpo = novoNomeWs.split(/\s+/).filter(Boolean).join(' ');
+    if (nomeLimpo.length < 2) {
+      setErroNome('Informe o nome do workspace (mínimo de 2 caracteres).');
+      return;
+    }
+    setSalvandoNome(true);
+    setErroNome(null);
+    try {
+      const r = await clients.core.updateWorkspace(renomeando.id, { name: nomeLimpo });
+      setRenomeando(null);
+      showToast(`Workspace renomeado para “${r.name}”.`, 'success');
+      // Lista desta tela e seletor/títulos do painel (via /auth/me) com o nome novo.
+      await Promise.all([carregar(), refreshMe()]);
+    } catch (err: any) {
+      logSafe('renomear workspace', err);
+      const campo = err instanceof ProblemDetailsException ? err.formatFieldErrors()['name']?.join(' ') : undefined;
+      setErroNome(campo || err?.message || 'Não foi possível renomear o workspace.');
+    } finally {
+      setSalvandoNome(false);
+    }
+  };
+
   const souAdmin = criado && criado.admin_user_id === user?.id;
   const irParaConfiguracao = (id: string) => {
     // Recarrega o contexto (permissões e workspaces do usuário) já no novo workspace.
@@ -156,7 +192,7 @@ export const AdminWorkspacesPage: React.FC = () => {
       actions={podeCriar ? <Button variant="primary" size="sm" onClick={abrir}>Criar workspace</Button> : undefined}
     >
       {!isSuper && (
-        <p className="pf-help">Você vê os workspaces que administra. Ativar ou suspender é feito pelo SUPER_ADMIN.</p>
+        <p className="pf-help">Você vê os workspaces que administra e pode renomeá-los. Ativar ou suspender é feito pelo SUPER_ADMIN.</p>
       )}
       {erroLista && (
         <Notice variant="error" title="Não foi possível carregar os workspaces">
@@ -180,15 +216,19 @@ export const AdminWorkspacesPage: React.FC = () => {
                   </div>
                   <Badge status={st.badge} customLabel={st.label} size="sm" />
                 </div>
-                {isSuper && (
+                {(isSuper || podeRenomear(w)) && (
                   <div className="pf-actions-end">
-                    {w.status !== 'ACTIVE' && (
+                    {podeRenomear(w) && (
+                      <Button size="sm" variant="outline" onClick={() => abrirRenomear(w)}
+                        aria-label={`Renomear o workspace ${w.name}`}>Renomear</Button>
+                    )}
+                    {isSuper && w.status !== 'ACTIVE' && (
                       <Button size="sm" variant="outline" isLoading={mudando === w.id} onClick={() => mudarSituacao(w, 'ACTIVE')}>Ativar</Button>
                     )}
-                    {w.status !== 'SUSPENDED' && (
+                    {isSuper && w.status !== 'SUSPENDED' && (
                       <Button size="sm" variant="ghost" isLoading={mudando === w.id} onClick={() => mudarSituacao(w, 'SUSPENDED')}>Suspender</Button>
                     )}
-                    {w.status !== 'PREPARING' && (
+                    {isSuper && w.status !== 'PREPARING' && (
                       <Button size="sm" variant="ghost" isLoading={mudando === w.id} onClick={() => mudarSituacao(w, 'PREPARING')}>Voltar à preparação</Button>
                     )}
                   </div>
@@ -260,6 +300,26 @@ export const AdminWorkspacesPage: React.FC = () => {
               </>
             )}
             {erroGeral && <Notice variant="error" title="Workspace não criado">{erroGeral}</Notice>}
+            <button type="submit" hidden aria-hidden="true" tabIndex={-1} />
+          </form>
+        )}
+      </Modal>
+      <Modal isOpen={!!renomeando} onClose={() => !salvandoNome && setRenomeando(null)} maxWidth="520px"
+        title="Renomear workspace"
+        description="Altera só o nome de exibição (seletor e títulos). Razão social, CNPJ, ambiente, certificado, permissões, documentos e configurações fiscais não mudam."
+        footer={(
+          <div className="pf-actions-end">
+            <Button variant="outline" onClick={() => setRenomeando(null)} disabled={salvandoNome}>Cancelar</Button>
+            <Button variant="primary" onClick={salvarNome} isLoading={salvandoNome} disabled={salvandoNome}>Salvar nome</Button>
+          </div>
+        )}>
+        {renomeando && (
+          <form className="pf-form-grid" onSubmit={(e) => { e.preventDefault(); salvarNome(); }} noValidate>
+            <Input label="Nome do workspace *" value={novoNomeWs} maxLength={200} autoFocus
+              onChange={(e) => { setNovoNomeWs(e.target.value); setErroNome(null); }} error={erroNome || undefined} />
+            <p className="pf-help pf-span-all">
+              Razão social: {renomeando.company.name} · CNPJ {fmtCnpj(renomeando.company.cnpj)} (não mudam).
+            </p>
             <button type="submit" hidden aria-hidden="true" tabIndex={-1} />
           </form>
         )}

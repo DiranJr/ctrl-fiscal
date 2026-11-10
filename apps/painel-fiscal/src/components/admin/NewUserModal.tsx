@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Alert, Button, Input, Modal, Select } from '@ctrl-fiscal/ui';
 import type { AdminCompany, AdminMeta, CreateAdminUserResponse } from '@ctrl-fiscal/api-client';
+import { nomeExibicao } from '@ctrl-fiscal/api-client';
 import { useFiscal, logSafe } from '../../context/FiscalContext.js';
 import { PermissionCheckboxes, friendlyAdminError } from './adminShared.js';
 
@@ -129,7 +130,7 @@ export const NewUserModal: React.FC<{
             <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-end', flexWrap: 'wrap' }}>
               <div style={{ flex: '1 1 14rem', minWidth: 0 }}>
                 <Select label="Adicionar empresa" value={addCompany || available[0].id} onChange={(e) => setAddCompany(e.target.value)}
-                  options={available.map((c) => ({ value: c.id, label: `${c.name} (${c.cnpj})` }))} />
+                  options={available.map((c) => ({ value: c.id, label: `${nomeExibicao(c)} (${c.cnpj})` }))} />
               </div>
               <Button variant="secondary" onClick={addMembership}>Adicionar vínculo</Button>
             </div>

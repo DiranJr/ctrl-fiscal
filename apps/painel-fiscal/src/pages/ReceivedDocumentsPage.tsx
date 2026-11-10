@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { FiscalDocument, ProblemDetailsException, ReviewStatus } from '@ctrl-fiscal/api-client';
+import { FiscalDocument, ProblemDetailsException, ReviewStatus, nomeExibicao } from '@ctrl-fiscal/api-client';
 import { Alert, Button, Select, Textarea } from '@ctrl-fiscal/ui';
 import { useFiscal, logSafe } from '../context/FiscalContext.js';
 import { DocumentsWorkspace } from '../components/documents/DocumentsWorkspace.js';
@@ -58,7 +58,7 @@ export const ReceivedDocumentsPage: React.FC<{ onNavigate: (route: string) => vo
     <DocumentsWorkspace
       direction="RECEIVED"
       title="Notas recebidas"
-      description={<>NFS-e de serviços tomados por <strong>{currentCompany?.name}</strong></>}
+      description={<>NFS-e de serviços tomados por <strong>{nomeExibicao(currentCompany)}</strong></>}
       counterpartLabel="Prestador"
       showReviewColumn
       renderDetailExtras={(doc, reload, replaceDoc) => <ReviewForm doc={doc} reload={reload} replaceDoc={replaceDoc} />}

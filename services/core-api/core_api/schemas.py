@@ -39,7 +39,9 @@ class CsrfResponse(BaseModel):
 
 class CompanyAccess(BaseModel):
     id: str
-    name: str
+    name: str = Field(description="Razão social da empresa (dado fiscal).")
+    display_name: str = Field("", description="Nome de exibição do workspace (seletor e títulos); a razão social "
+                                              "quando a empresa não tem workspace.")
     cnpj: str
     timezone: str
     permissions: list[Permission]
@@ -134,6 +136,7 @@ class AdminUserCreated(BaseModel):
 class AdminCompanyOut(BaseModel):
     id: str
     name: str
+    display_name: str = Field("", description="Nome de exibição do workspace (a razão social, sem workspace).")
     cnpj: str
 
 

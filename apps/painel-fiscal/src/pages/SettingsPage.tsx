@@ -7,6 +7,7 @@ import {
   FiscalProfilePatch,
   CertificateInfo,
   getEnvironmentBadgeConfig,
+  nomeExibicao,
   ProblemDetailsException,
 } from '@ctrl-fiscal/api-client';
 import { ScreenSection, InfoTile } from '../components/screen/ScreenSection.js';
@@ -225,7 +226,7 @@ export const SettingsPage: React.FC = () => {
         title="Configurações e Parâmetros Fiscais"
         description={
           <>
-            Parâmetros tributários, perfil fiscal e gestão segura do certificado A1 da empresa <strong>{currentCompany?.name}</strong>
+            Parâmetros tributários, perfil fiscal e gestão segura do certificado A1 do workspace <strong>{nomeExibicao(currentCompany)}</strong>
           </>
         }
       />

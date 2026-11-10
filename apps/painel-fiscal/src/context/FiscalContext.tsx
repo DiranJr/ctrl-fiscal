@@ -37,6 +37,8 @@ interface FiscalContextType {
   refreshCounters: () => Promise<void>;
   refreshSyncStatus: () => Promise<void>;
   refreshIntegrationStatus: () => Promise<void>;
+  /** Relê usuário, empresas e workspaces (ex.: nome de exibição alterado) sem trocar o workspace ativo. */
+  refreshMe: () => Promise<void>;
   clients: ApiClients;
   showToast: (message: string, type?: 'success' | 'error' | 'info' | 'warning') => void;
   toast: { message: string; type: 'success' | 'error' | 'info' | 'warning' } | null;
@@ -233,6 +235,19 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   }, [companies, currentCompany, clients.fiscal, clients.core, showToast, confirmLeave, sameContext]);
 
+  const refreshMe = useCallback(async () => {
+    try {
+      const me = await clients.core.getMe();
+      setUser(me);
+      setCompanies(me.companies || []);
+      setWorkspaces(me.workspaces || []);
+      // Mesmo workspace ativo (mesmo id), só com os dados atualizados; nada é limpo nem recarregado.
+      setCurrentCompany((atual) => (atual ? (me.companies || []).find((c) => c.id === atual.id) || atual : atual));
+    } catch (err) {
+      logSafe('atualizar usuário', err);
+    }
+  }, [clients.core]);
+
   const workspace = React.useMemo(
     () => workspaces.find((w) => w.id === currentCompany?.id) || null,
     [workspaces, currentCompany],
@@ -256,6 +271,7 @@ export const FiscalProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         refreshCounters,
         refreshSyncStatus,
         refreshIntegrationStatus,
+        refreshMe,
         clients,
         showToast,
         toast,

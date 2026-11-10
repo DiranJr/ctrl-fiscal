@@ -12,7 +12,7 @@ import {
   Icon,
   PageHeader,
 } from '@ctrl-fiscal/ui';
-import { Customer } from '@ctrl-fiscal/api-client';
+import { Customer, nomeExibicao } from '@ctrl-fiscal/api-client';
 import { TableEmpty } from '../components/screen/ScreenSection.js';
 
 export const CustomersPage: React.FC = () => {
@@ -260,7 +260,7 @@ export const CustomersPage: React.FC = () => {
     <div className="pf-stack">
       <PageHeader
         title="Cadastro de Clientes (Tomadores)"
-        description={<>Base de clientes autorizados para faturamento da empresa <strong>{currentCompany?.name}</strong></>}
+        description={<>Base de clientes autorizados para faturamento da empresa <strong>{nomeExibicao(currentCompany)}</strong></>}
         primaryAction={
           <Button variant="primary" onClick={handleOpenCreate} aria-haspopup="dialog">
             <Icon name="plus" size={16} /> Novo Cliente
